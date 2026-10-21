@@ -22,6 +22,7 @@ function serveDist() {
   });
 }
 
+/** @param {string} url */
 function isUiUrl(url) {
   // compare scheme + host: URL.origin is "null" for every custom scheme
   const target = new URL(url);
@@ -51,6 +52,7 @@ function createWindow() {
 }
 
 // The Vite dev server may still be starting; retry until it answers.
+/** @param {BrowserWindow} win */
 function load(win) {
   win.loadURL(UI_URL).catch(() => {
     if (!win.isDestroyed()) setTimeout(() => load(win), 500);
@@ -59,7 +61,8 @@ function load(win) {
 
 // The page gets the optional service token over IPC, so it is never baked into the bundle or a URL.
 ipcMain.handle("sensei:config", (event) => {
-  if (!isUiUrl(event.senderFrame.url)) throw new Error("sensei:config is only available to the SENSEI UI");
+  // senderFrame is null if the frame navigated away or was destroyed meanwhile
+  if (!event.senderFrame || !isUiUrl(event.senderFrame.url)) throw new Error("sensei:config is only available to the SENSEI UI");
   return { token: process.env.SENSEI_TOKEN || null };
 });
 

@@ -6,11 +6,12 @@
 - Electron UI (dev server, built, packaged)
 - Suggestion engine with heuristics, ranked by confidence
 - Feedback messages (validated and logged)
+- Apply accepted actions in the host (action ids, idempotent apply, bounded params, host-side guards)
+- Per-client tokens with roles
 
 ## v0.2
 - Resolve adapter prototype (Python)
 - Adobe bridge proof-of-concept (CEP/UXP)
-- Apply accepted actions in the host (action ids, idempotent apply, host-side guards)
 - Audio beat detection utility module
 - Persistent projects + feedback logging
 

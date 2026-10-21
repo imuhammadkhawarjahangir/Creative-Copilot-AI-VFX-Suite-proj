@@ -17,13 +17,15 @@
 - **Desktop renderer:** context isolation, no Node integration, sandbox; a Content-Security-Policy (no `eval`,
   WebSockets only to the service); popups and navigation away from the UI are blocked. The token reaches the page
   over IPC through a sandboxed preload, never through the bundle or a URL.
+- **Applying actions:** a UI can only name a suggestion; the action sent to a host is the one the service produced,
+  limited to four ops whose params are re-checked against fixed bounds (unknown keys rejected). Action ids are
+  derived from project and suggestion, so hosts can refuse repeats; a host can only report on its own project's
+  actions.
 - **Input handling:** every message is validated; malformed input gets an error reply rather than a crash.
 - **Supply chain:** Python dependencies are hash-pinned and installed with `--require-hashes`; npm dependencies are
   locked; CI actions are pinned to commit SHAs; the images run as non-root users.
 
 ## Known gaps
-- Suggested actions are not applied to hosts yet. Before they are: give actions ids, make "apply" idempotent with
-  host-side guards, and limit params so an action cannot trigger destructive operations.
 - Feedback is logged, not stored; retention rules are needed once it is persisted.
 - Tokens identify clients (an app or adapter), not people: there is no per-user login, and revoking a client takes
   effect when the service restarts.

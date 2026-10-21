@@ -1,11 +1,13 @@
 import asyncio
+import hashlib
 import json
 import logging
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 from pydantic import ValidationError
 from .clients import authenticate
 from .config import settings
-from .protocol import HelloMsg, ContextFrameMsg, FeedbackMsg, ProjectClosedMsg
+from .protocol import (ActionOutcomeMsg, ActionResultMsg, ApplyActionMsg, ApplyMsg, ContextFrameMsg,
+                       FeedbackMsg, HelloMsg, ProjectClosedMsg, checked_params)
 from .engine.suggest import build_suggestions
 
 log = logging.getLogger("uvicorn.error")
@@ -26,13 +28,25 @@ class UiClient:
 
 
 class Hub:
-    # Fans suggestions out to connected UIs, one stream per project. Every method is
-    # synchronous, so hub state never changes halfway through another update.
+    # Fans suggestions out to connected UIs, one stream per project, and routes applied
+    # actions to the project's hosts. Every method is synchronous, so hub state never
+    # changes halfway through another update.
     def __init__(self):
         self.clients: set[UiClient] = set()
-        self.latest: dict[str, str] = {}  # project id -> last suggestions message
-        self.hosts: dict[str, int] = {}   # project id -> connected host count
-        self.background: set[asyncio.Task] = set()  # close tasks, kept referenced until they finish
+        self.latest: dict[str, str] = {}               # project id -> last suggestions message
+        self.hosts: dict[str, set[WebSocket]] = {}     # project id -> connected host sockets
+        self.actions: dict[str, tuple[str, str]] = {}  # action id -> (project id, suggestion id)
+        self.background: set[asyncio.Task] = set()     # sends and closes in flight, kept referenced
+
+    def spawn(self, coro):
+        task = asyncio.get_running_loop().create_task(coro)
+        self.background.add(task)
+        task.add_done_callback(self.finished)
+
+    def finished(self, task: asyncio.Task):
+        self.background.discard(task)
+        if not task.cancelled() and task.exception() is not None:
+            log.info("background send failed: %r", task.exception())
 
     def subscribe(self, ws: WebSocket) -> UiClient:
         # The snapshot is queued in the same step as registration, so no publish or close can
@@ -69,9 +83,7 @@ class Hub:
         if ui.queue.full():
             log.warning("disconnecting a UI that stopped reading (%d messages behind)", ui.queue.qsize())
             self.unsubscribe(ui)
-            closing = asyncio.get_running_loop().create_task(close_quietly(ui.ws))
-            self.background.add(closing)
-            closing.add_done_callback(self.background.discard)
+            self.spawn(close_quietly(ui.ws))
             return
         ui.queue.put_nowait(message)
 
@@ -83,17 +95,57 @@ class Hub:
         self.latest[project_id] = message
         self.send_all(message)
 
-    def open(self, project_id: str):
-        self.hosts[project_id] = self.hosts.get(project_id, 0) + 1
+    def open(self, project_id: str, host: WebSocket):
+        self.hosts.setdefault(project_id, set()).add(host)
 
-    def close(self, project_id: str):
-        remaining = self.hosts.get(project_id, 0) - 1
-        if remaining > 0:
-            self.hosts[project_id] = remaining
+    def close(self, project_id: str, host: WebSocket):
+        hosts = self.hosts.get(project_id)
+        if hosts is None:
             return
-        self.hosts.pop(project_id, None)
+        hosts.discard(host)
+        if hosts:
+            return
+        del self.hosts[project_id]
         self.latest.pop(project_id, None)
+        self.actions = {a: owner for a, owner in self.actions.items() if owner[0] != project_id}
         self.send_all(ProjectClosedMsg(project_id=project_id).model_dump_json())
+
+    def apply(self, project_id: str, suggestion_id: str) -> str | None:
+        # Sends a current suggestion's action to the project's hosts. The UI only names the
+        # suggestion: the action comes from what the service produced, re-checked against the
+        # per-op bounds. Returns a "failed" outcome for the UI, or None once sent.
+        def failed(detail: str) -> str:
+            return ActionOutcomeMsg(project_id=project_id, suggestion_id=suggestion_id,
+                                    status="failed", detail=detail).model_dump_json()
+
+        hosts = self.hosts.get(project_id)
+        if not hosts:
+            return failed("no host is connected for this project")
+        items = json.loads(self.latest[project_id])["items"] if project_id in self.latest else []
+        item = next((i for i in items if i["id"] == suggestion_id), None)
+        if item is None:
+            return failed("this suggestion is no longer current")
+        op = item["action"]["op"]
+        try:
+            params = checked_params(op, item["action"]["params"])
+        except ValueError:
+            return failed("the action is outside the allowed bounds")
+        # the same suggestion in the same project always gets the same id, so hosts can deduplicate
+        action_id = "act_" + hashlib.sha256(f"{project_id}/{suggestion_id}".encode()).hexdigest()[:12]
+        self.actions[action_id] = (project_id, suggestion_id)
+        message = ApplyActionMsg(action_id=action_id, suggestion_id=suggestion_id, op=op, params=params).model_dump_json()
+        for host in hosts:
+            self.spawn(host.send_text(message))
+        return None
+
+    def report(self, project_id: str, result: ActionResultMsg) -> str | None:
+        # Forwards a host's result to every UI. Returns an error for the host, or None.
+        owner = self.actions.get(result.action_id)
+        if owner is None or owner[0] != project_id:
+            return "unknown action_id for this host's project"
+        self.send_all(ActionOutcomeMsg(project_id=project_id, suggestion_id=owner[1], action_id=result.action_id,
+                                       status=result.status, detail=result.detail).model_dump_json())
+        return None
 
 
 hub = Hub()
@@ -145,8 +197,13 @@ def describe(err: ValidationError) -> str:
     return "; ".join(f"{'.'.join(map(str, e['loc']))}: {e['msg']}" for e in err.errors())
 
 
-async def serve(ws: WebSocket, reply, on_hello=None, on_frame=None, active=lambda: True, client=""):
+ONLY_ON = {"context_frame": "/ws/host", "action_result": "/ws/host", "apply": "/ws/ui"}
+
+
+async def serve(ws: WebSocket, reply, handlers=None, on_hello=None, active=lambda: True, client=""):
     # Bad input gets an error reply; the socket stays open. Stops as soon as active() turns false.
+    # `handlers` maps the endpoint's own message types to async handlers that validate their input.
+    handlers = handlers or {}
     while active():
         raw = await ws.receive_text()
         if not active():
@@ -167,16 +224,15 @@ async def serve(ws: WebSocket, reply, on_hello=None, on_frame=None, active=lambd
                 if on_hello is not None:
                     on_hello(hello)
                 await reply(json.dumps({"type": "ack", "ok": True}))
-            elif msg_type == "context_frame":
-                if on_frame is None:
-                    await reply(error("context_frame is only accepted on /ws/host"))
-                else:
-                    await on_frame(ContextFrameMsg.model_validate(data))
             elif msg_type == "feedback":
                 fb = FeedbackMsg.model_validate(data)
                 # accept feedback (store later)
                 log.info("feedback %r %s (project %r, client %r)", fb.suggestion_id, fb.verdict, fb.project_id, client or None)
                 await reply(json.dumps({"type": "ack_feedback", "ok": True}))
+            elif msg_type in handlers:
+                await handlers[msg_type](data)
+            elif msg_type in ONLY_ON:
+                await reply(error(f"{msg_type} is only accepted on {ONLY_ON[msg_type]}"))
             else:
                 await reply(error("unknown msg type"))
         except ValidationError as err:
@@ -202,13 +258,14 @@ async def ws_host(ws: WebSocket):
         nonlocal hello
         previous, hello = hello, msg
         log.info("project %r registered by host %r (client %r)", msg.project.id, msg.host.name, client or None)
-        # register the new project before releasing the old one, so re-sending the same
-        # project never closes it in between
-        hub.open(msg.project.id)
-        if previous is not None:
-            hub.close(previous.project.id)
+        # register the new project before releasing the old one; re-sending the same project changes nothing
+        if previous is None or previous.project.id != msg.project.id:
+            hub.open(msg.project.id, ws)
+            if previous is not None:
+                hub.close(previous.project.id, ws)
 
-    async def on_frame(ctx: ContextFrameMsg):
+    async def on_frame(data: dict):
+        ctx = ContextFrameMsg.model_validate(data)
         if hello is None:
             await ws.send_text(error("send hello before context_frame"))
             return
@@ -218,13 +275,24 @@ async def ws_host(ws: WebSocket):
         hub.publish(hello.project.id, suggestions)  # never waits on a UI
         await ws.send_text(suggestions)
 
+    async def on_result(data: dict):
+        result = ActionResultMsg.model_validate(data)
+        if hello is None:
+            await ws.send_text(error("send hello before action_result"))
+            return
+        problem = hub.report(hello.project.id, result)
+        if problem is not None:
+            await ws.send_text(error(problem))
+            return
+        log.info("action %s %s by host %r (client %r)", result.action_id, result.status, hello.host.name, client or None)
+
     try:
-        await serve(ws, ws.send_text, on_hello, on_frame, client=client)
+        await serve(ws, ws.send_text, {"context_frame": on_frame, "action_result": on_result}, on_hello, client=client)
     except WebSocketDisconnect:
         return
     finally:
         if hello is not None:
-            hub.close(hello.project.id)
+            hub.close(hello.project.id, ws)
 
 
 @app.websocket("/ws/ui")
@@ -239,10 +307,17 @@ async def ws_ui(ws: WebSocket):
     async def reply(message: str):
         hub.send(ui, message)
 
+    async def on_apply(data: dict):
+        request = ApplyMsg.model_validate(data)
+        log.info("apply %r requested for project %r (client %r)", request.suggestion_id, request.project_id, client or None)
+        outcome = hub.apply(request.project_id, request.suggestion_id)
+        if outcome is not None:
+            await reply(outcome)
+
     try:
         await ws.accept(subprotocol=subprotocol or None)
         hub.start(ui)
-        await serve(ws, reply, active=lambda: not ui.dropped, client=client)
+        await serve(ws, reply, {"apply": on_apply}, active=lambda: not ui.dropped, client=client)
         # Dropped (fell behind, or its socket failed). Our close may still be waiting for the socket
         # to drain, and Starlette refuses receive_text() once a close has begun, so read raw messages
         # (ignored) until the connection ends; uvicorn's keepalive still cuts a client that never reads.

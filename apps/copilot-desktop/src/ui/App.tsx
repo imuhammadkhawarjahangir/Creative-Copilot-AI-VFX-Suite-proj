@@ -1,6 +1,6 @@
 import React, { useEffect, useRef, useState } from "react";
 import SuggestionCard from "./components/SuggestionCard";
-import type { Suggestion, Verdict } from "./types";
+import type { ActionOutcome, Suggestion, Verdict } from "./types";
 
 type ProjectStream = { host: string; items: Suggestion[] };
 
@@ -11,6 +11,7 @@ export default function App() {
   const [projects, setProjects] = useState<Record<string, ProjectStream>>({});
   // keyed by "<project>/<suggestion id>" so a verdict survives the card being remounted
   const [verdicts, setVerdicts] = useState<Record<string, Verdict>>({});
+  const [outcomes, setOutcomes] = useState<Record<string, ActionOutcome>>({});
   const [connected, setConnected] = useState(false);
   const wsRef = useRef<WebSocket | null>(null);
 
@@ -36,6 +37,9 @@ export default function App() {
           const msg = JSON.parse(evt.data);
           if (msg.type === "suggestions") {
             setProjects((prev) => ({ ...prev, [msg.project_id]: { host: msg.host, items: msg.items } }));
+          } else if (msg.type === "action_result") {
+            const outcome: ActionOutcome = { status: msg.status, detail: msg.detail };
+            setOutcomes((prev) => ({ ...prev, [`${msg.project_id}/${msg.suggestion_id}`]: outcome }));
           } else if (msg.type === "project_closed") {
             setProjects((prev) => {
               const next = { ...prev };
@@ -65,11 +69,15 @@ export default function App() {
     };
   }, []);
 
-  const sendFeedback = (projectId: string, suggestionId: string, verdict: Verdict) => {
+  // Apply asks the service to send the suggestion's action to the host (the outcome arrives as
+  // action_result); Dismiss is plain feedback.
+  const decide = (projectId: string, suggestionId: string, verdict: Verdict) => {
     const ws = wsRef.current;
     // Only show a verdict the service actually received; the buttons are disabled while disconnected.
     if (ws?.readyState !== WebSocket.OPEN) return;
-    ws.send(JSON.stringify({ type: "feedback", suggestion_id: suggestionId, verdict, project_id: projectId }));
+    ws.send(JSON.stringify(verdict === "accepted"
+      ? { type: "apply", project_id: projectId, suggestion_id: suggestionId }
+      : { type: "feedback", suggestion_id: suggestionId, verdict, project_id: projectId }));
     setVerdicts((prev) => ({ ...prev, [`${projectId}/${suggestionId}`]: verdict }));
   };
 
@@ -99,8 +107,9 @@ export default function App() {
                 key={s.id}
                 s={s}
                 status={verdicts[`${projectId}/${s.id}`] ?? "idle"}
+                outcome={outcomes[`${projectId}/${s.id}`]}
                 disabled={!connected}
-                onFeedback={(verdict) => sendFeedback(projectId, s.id, verdict)}
+                onFeedback={(verdict) => decide(projectId, s.id, verdict)}
               />
             ))}
           </div>

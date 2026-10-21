@@ -1,5 +1,11 @@
 export type Verdict = "accepted" | "rejected";
 
+// What became of an applied suggestion: the host's answer, or "failed" if the service couldn't reach one.
+export type ActionOutcome = {
+  status: "applied" | "marked" | "duplicate" | "rejected" | "failed";
+  detail?: string | null;
+};
+
 export type SenseiConfig = { token: string | null; serviceUrl: string };
 
 declare global {

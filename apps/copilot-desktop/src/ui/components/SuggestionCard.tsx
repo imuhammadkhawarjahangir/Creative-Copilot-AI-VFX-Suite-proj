@@ -1,14 +1,23 @@
 import React from "react";
-import type { Suggestion, Verdict } from "../types";
+import type { ActionOutcome, Suggestion, Verdict } from "../types";
 
 type Props = {
   s: Suggestion;
   status: "idle" | Verdict;
+  outcome?: ActionOutcome;
   disabled: boolean;
   onFeedback: (verdict: Verdict) => void;
 };
 
-export default function SuggestionCard({ s, status, disabled, onFeedback }: Props) {
+const OUTCOME_TEXT: Record<ActionOutcome["status"], string> = {
+  applied: "Applied in the host",
+  marked: "Marked in the host for a manual edit",
+  duplicate: "Already applied in the host",
+  rejected: "The host refused it",
+  failed: "Couldn't apply"
+};
+
+export default function SuggestionCard({ s, status, outcome, disabled, onFeedback }: Props) {
   return (
     <div style={{
       border: "1px solid rgba(0,0,0,0.12)",
@@ -35,6 +44,11 @@ export default function SuggestionCard({ s, status, disabled, onFeedback }: Prop
         </button>
         {status !== "idle" && <span style={{ opacity: 0.7 }}>✓ {status}</span>}
       </div>
+      {outcome && (
+        <div className="outcome" style={{ marginTop: 8, fontSize: 12, opacity: 0.8 }}>
+          {OUTCOME_TEXT[outcome.status]}{outcome.detail ? `: ${outcome.detail}` : ""}
+        </div>
+      )}
     </div>
   );
 }

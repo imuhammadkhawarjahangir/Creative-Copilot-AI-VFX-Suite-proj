@@ -36,7 +36,8 @@ npm install
 npm run dev
 ```
 The first run downloads the Electron binary. Suggestions stream into the window, one section per project, as the
-mock host's playhead moves; Apply / Dismiss send feedback to the service (visible in its logs). A decision is
+mock host's playhead moves. Apply sends the suggestion to the host (the mock host logs it, and the card shows the
+host's answer); Dismiss sends feedback to the service (visible in its logs). A decision is
 remembered for that suggestion: ids are derived from content, so a suggestion you applied or dismissed shows as
 decided whenever it reappears, for the rest of the session. The buttons are disabled while the UI is disconnected.
 

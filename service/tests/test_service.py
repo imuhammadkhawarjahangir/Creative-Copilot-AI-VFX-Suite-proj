@@ -39,6 +39,7 @@ def client():
     hub.clients.clear()
     hub.latest.clear()
     hub.hosts.clear()
+    hub.actions.clear()
     return TestClient(app)
 
 
@@ -320,10 +321,11 @@ def test_a_failed_send_ends_the_sender_cleanly():
 def test_snapshot_is_queued_before_later_updates():
     # a project closing right after a UI connects must not be resurrected by the replay
     hub = Hub()
-    hub.open("p")
+    host = FakeWs()
+    hub.open("p", host)
     hub.publish("p", "latest")
     ui = hub.subscribe(FakeWs())
-    hub.close("p")
+    hub.close("p", host)
     assert queued(ui) == ["latest", '{"type":"project_closed","project_id":"p"}']
 
 
@@ -336,13 +338,13 @@ def test_host_switching_projects_keeps_counts_right(client):
         host.send_json(FRAME)
         host.receive_json()
         assert ui.receive_json()["type"] == "suggestions"  # no project_closed for "b" in between
-        assert hub.hosts == {"b": 1}
+        assert {project: len(hosts) for project, hosts in hub.hosts.items()} == {"b": 1}
     assert hub.hosts == {}
 
 
 def test_closing_an_unknown_project_is_harmless():
     hub = Hub()
-    hub.close("never-opened")
+    hub.close("never-opened", FakeWs())
     assert hub.hosts == {}
 
 

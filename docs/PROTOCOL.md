@@ -3,8 +3,8 @@
 Transport: WebSocket JSON
 
 ## Endpoints
-- `/ws/host` — editing hosts. Send `hello` first (it registers the host's project), then `context_frame` and `feedback`. Each `context_frame` is answered with `suggestions` on the same socket; a frame sent before `hello` gets an `error`.
-- `/ws/ui` — copilot UIs. No handshake: UIs don't register a project (a `hello` here is acknowledged and ignored). Send `feedback`. On connect, receive the latest `suggestions` of every open project; then every `suggestions` message produced from any host's frames, and `project_closed` when the last host of a project disconnects, in that order. A UI that falls 256 messages behind is disconnected (close code 1013) rather than slowing everyone else down.
+- `/ws/host` — editing hosts. Send `hello` first (it registers the host's project), then `context_frame`, `action_result` and `feedback`. Each `context_frame` is answered with `suggestions` on the same socket; a frame sent before `hello` gets an `error`. Hosts also receive `apply_action` (see *Applying a suggestion*).
+- `/ws/ui` — copilot UIs. No handshake: UIs don't register a project (a `hello` here is acknowledged and ignored). Send `apply` and `feedback`. On connect, receive the latest `suggestions` of every open project; then every `suggestions` message produced from any host's frames, and `project_closed` when the last host of a project disconnects, in that order. A UI that falls 256 messages behind is disconnected (close code 1013) rather than slowing everyone else down.
 
 Suggestions are scoped per project: each `suggestions` message carries the `project_id` and `host` name from that host's `hello`, so a UI can keep one stream per project.
 - `GET /health` — `{"ok": true}`
@@ -77,14 +77,26 @@ Setting both is refused at startup; setting neither leaves auth off.
 Items are ordered by confidence, highest first. An item's `id` is derived from its content, so an unchanged suggestion keeps its id across frames. Times in action params (`time`, `at`) are seconds, rounded to milliseconds.
 
 ### Actions
-Actions describe an edit; no host applies them yet.
+An action describes an edit. These are the only ops a host is ever asked to perform; the service checks every action against these bounds (and rejects unknown keys) before sending it.
 
-| `op` | `params` |
+| `op` | `params` (bounds) |
 |------|----------|
-| `apply_color_grade` | `lut`, `contrast`, `sat`, optional `shadow_tint`, `highlight_tint` |
-| `apply_transition_at_cut` | `type` (`dip_to_black` or `cross_dissolve`), `frames`, `at` (cut time) |
-| `snap_keyframe_to_time` | `time` (the next beat), `target` (`next_keyframe`) |
-| `apply_vfx_preset` | `preset`, `threshold`, `intensity`, `radius` |
+| `apply_color_grade` | `lut` (`[a-z0-9_]{1,64}`), `contrast` (0.5–2), `sat` (0–2), optional `shadow_tint`, `highlight_tint` (`teal` or `warm`) |
+| `apply_transition_at_cut` | `type` (`dip_to_black` or `cross_dissolve`), `frames` (1–48), `at` (cut time, ≥ 0) |
+| `snap_keyframe_to_time` | `time` (the next beat, ≥ 0), `target` (`next_keyframe`) |
+| `apply_vfx_preset` | `preset` (`[a-z0-9_]{1,64}`), `threshold`, `intensity`, `radius` (0–1) |
+
+## Applying a suggestion
+
+1. The UI names a suggestion; it never sends an action itself:
+   `{ "type": "apply", "project_id": "p1", "suggestion_id": "sug_7bec91a2" }`
+2. The service looks the suggestion up in that project's latest suggestions, re-checks its action against the bounds above, and sends it to every host of the project:
+   `{ "type": "apply_action", "action_id": "act_3f1c09a2b4d7", "suggestion_id": "sug_7bec91a2", "op": "apply_color_grade", "params": { ... } }`
+   The `action_id` is derived from the project and suggestion, so applying the same suggestion again yields the same id; a host must apply an id at most once.
+3. The host answers on its socket:
+   `{ "type": "action_result", "action_id": "act_3f1c09a2b4d7", "status": "applied", "detail": null }`
+   `status` is `applied`, `marked` (the host can't do it directly and left a marker for the editor), `duplicate` (already applied) or `rejected` (with a `detail`). A host can only report actions of its own project.
+4. The service forwards the result to every UI, with `project_id` and `suggestion_id` added. If the service couldn't send the action (no host connected, the suggestion is no longer current, or it fails the bounds), the UI gets the same message with `"status": "failed"` and a `detail`.
 
 ## UI/Host -> Service (feedback)
 {

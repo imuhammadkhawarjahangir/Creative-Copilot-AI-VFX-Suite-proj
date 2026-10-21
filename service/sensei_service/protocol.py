@@ -1,5 +1,5 @@
 from typing import Annotated, Literal, Optional, Any
-from pydantic import BaseModel, Field, StringConstraints
+from pydantic import BaseModel, ConfigDict, Field, StringConstraints
 
 # Client-supplied strings that end up in logs and the UI are bounded, and can't carry control
 # characters (e.g. newlines that would forge log lines).
@@ -78,3 +78,74 @@ class SuggestionsMsg(BaseModel):
 class ProjectClosedMsg(BaseModel):
     type: Literal["project_closed"] = "project_closed"
     project_id: str
+
+# --- Applying actions -------------------------------------------------------------------------
+
+ActionId = Annotated[str, StringConstraints(pattern=r"^act_[0-9a-f]{12}$")]
+PresetName = Annotated[str, StringConstraints(pattern=r"^[a-z0-9_]{1,64}$")]
+Unit = Annotated[float, Field(ge=0.0, le=1.0)]
+Seconds = Annotated[float, Field(ge=0.0)]
+
+class BoundedParams(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+class ColorGradeParams(BoundedParams):
+    lut: PresetName
+    contrast: Annotated[float, Field(ge=0.5, le=2.0)]
+    sat: Annotated[float, Field(ge=0.0, le=2.0)]
+    shadow_tint: Optional[Literal["teal", "warm"]] = None
+    highlight_tint: Optional[Literal["teal", "warm"]] = None
+
+class TransitionParams(BoundedParams):
+    type: Literal["dip_to_black", "cross_dissolve"]
+    frames: Annotated[int, Field(ge=1, le=48)]
+    at: Seconds
+
+class KeyframeParams(BoundedParams):
+    time: Seconds
+    target: Literal["next_keyframe"]
+
+class VfxParams(BoundedParams):
+    preset: PresetName
+    threshold: Unit
+    intensity: Unit
+    radius: Unit
+
+# The only operations a host is ever asked to perform, and the bounds on their params.
+ACTION_PARAMS: dict[str, type[BoundedParams]] = {
+    "apply_color_grade": ColorGradeParams,
+    "apply_transition_at_cut": TransitionParams,
+    "snap_keyframe_to_time": KeyframeParams,
+    "apply_vfx_preset": VfxParams,
+}
+
+def checked_params(op: str, params: dict[str, Any]) -> dict[str, Any]:
+    if op not in ACTION_PARAMS:
+        raise ValueError(f"unknown action op {op!r}")
+    return ACTION_PARAMS[op].model_validate(params).model_dump(exclude_none=True)
+
+class ApplyMsg(BaseModel):  # UI -> service: names a suggestion; the action comes from the service
+    type: Literal["apply"]
+    project_id: ProjectId
+    suggestion_id: SuggestionId
+
+class ApplyActionMsg(BaseModel):  # service -> host
+    type: Literal["apply_action"] = "apply_action"
+    action_id: ActionId
+    suggestion_id: SuggestionId
+    op: str
+    params: dict[str, Any]
+
+class ActionResultMsg(BaseModel):  # host -> service
+    type: Literal["action_result"]
+    action_id: ActionId
+    status: Literal["applied", "marked", "duplicate", "rejected"]
+    detail: Optional[Annotated[str, StringConstraints(max_length=200)]] = None
+
+class ActionOutcomeMsg(BaseModel):  # service -> UI; "failed" means the service never reached a host
+    type: Literal["action_result"] = "action_result"
+    project_id: str
+    suggestion_id: str
+    action_id: Optional[str] = None
+    status: Literal["applied", "marked", "duplicate", "rejected", "failed"]
+    detail: Optional[str] = None

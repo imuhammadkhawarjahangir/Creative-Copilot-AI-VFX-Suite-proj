@@ -12,5 +12,19 @@ jobs:
       - run: |
           cd service
           pip install -U pip
-          pip install -e .
-          python -m sensei_service.engine 2>/dev/null || true
+          pip install -e ".[test]"
+          pytest
+
+  desktop-build:
+    runs-on: ubuntu-latest
+    env:
+      ELECTRON_SKIP_BINARY_DOWNLOAD: "1"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+      - run: |
+          cd apps/copilot-desktop
+          npm install
+          npm run build

@@ -1,19 +1,15 @@
 import React, { useEffect, useRef, useState } from "react";
 import SuggestionCard from "./components/SuggestionCard";
+import type { Suggestion, Verdict } from "./types";
 
-type Suggestion = {
-  id: string;
-  kind: string;
-  title: string;
-  confidence: number;
-  rationale: string;
-  action: { op: string; params: Record<string, any> };
-};
+type ProjectStream = { host: string; items: Suggestion[] };
 
 const WS_URL = "ws://127.0.0.1:8000/ws/ui";
 
 export default function App() {
-  const [items, setItems] = useState<Suggestion[]>([]);
+  const [projects, setProjects] = useState<Record<string, ProjectStream>>({});
+  // keyed by "<project>/<suggestion id>" so a verdict survives the card being remounted
+  const [verdicts, setVerdicts] = useState<Record<string, Verdict>>({});
   const [connected, setConnected] = useState(false);
   const wsRef = useRef<WebSocket | null>(null);
 
@@ -27,6 +23,8 @@ export default function App() {
 
       ws.onopen = () => {
         setConnected(true);
+        // the service replays the latest suggestions of every open project right after connect
+        setProjects({});
         ws.send(JSON.stringify({
           type: "hello",
           host: { name: "copilot-ui", version: "0.1" },
@@ -38,7 +36,13 @@ export default function App() {
         try {
           const msg = JSON.parse(evt.data);
           if (msg.type === "suggestions") {
-            setItems(msg.items);
+            setProjects((prev) => ({ ...prev, [msg.project_id]: { host: msg.host, items: msg.items } }));
+          } else if (msg.type === "project_closed") {
+            setProjects((prev) => {
+              const next = { ...prev };
+              delete next[msg.project_id];
+              return next;
+            });
           }
         } catch {}
       };
@@ -58,12 +62,15 @@ export default function App() {
     };
   }, []);
 
-  const sendFeedback = (suggestionId: string, verdict: "accepted" | "rejected") => {
+  const sendFeedback = (projectId: string, suggestionId: string, verdict: Verdict) => {
+    setVerdicts((prev) => ({ ...prev, [`${projectId}/${suggestionId}`]: verdict }));
     const ws = wsRef.current;
     if (ws?.readyState === WebSocket.OPEN) {
-      ws.send(JSON.stringify({ type: "feedback", suggestion_id: suggestionId, verdict }));
+      ws.send(JSON.stringify({ type: "feedback", suggestion_id: suggestionId, verdict, project_id: projectId }));
     }
   };
+
+  const projectIds = Object.keys(projects).sort();
 
   return (
     <div style={{ padding: 18, fontFamily: "system-ui" }}>
@@ -74,12 +81,27 @@ export default function App() {
       <p style={{ fontSize: 12, opacity: 0.6 }}>
         {connected ? "Connected to SENSEI service" : "Connecting to SENSEI service…"}
       </p>
+      {connected && projectIds.length === 0 && (
+        <p style={{ opacity: 0.6 }}>Waiting for an editing host to send its timeline…</p>
+      )}
 
-      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
-        {items.map((s) => (
-          <SuggestionCard key={s.id} s={s} onFeedback={(verdict) => sendFeedback(s.id, verdict)} />
-        ))}
-      </div>
+      {projectIds.map((projectId) => (
+        <section key={projectId} style={{ marginTop: 16 }}>
+          <h2 style={{ fontSize: 14, margin: "0 0 8px" }}>
+            Project {projectId} <span style={{ fontWeight: 400, opacity: 0.6 }}>· {projects[projectId].host}</span>
+          </h2>
+          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
+            {projects[projectId].items.map((s) => (
+              <SuggestionCard
+                key={s.id}
+                s={s}
+                status={verdicts[`${projectId}/${s.id}`] ?? "idle"}
+                onFeedback={(verdict) => sendFeedback(projectId, s.id, verdict)}
+              />
+            ))}
+          </div>
+        </section>
+      ))}
     </div>
   );
 }

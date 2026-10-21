@@ -3,7 +3,7 @@ import logging
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 from pydantic import ValidationError
 from .config import settings
-from .protocol import HelloMsg, ContextFrameMsg, FeedbackMsg
+from .protocol import HelloMsg, ContextFrameMsg, FeedbackMsg, ProjectClosedMsg
 from .engine.suggest import build_suggestions
 
 log = logging.getLogger("uvicorn.error")
@@ -11,22 +11,36 @@ log = logging.getLogger("uvicorn.error")
 app = FastAPI(title="SENSEI Service", version="0.1.0")
 
 
-class UiHub:
-    # Fans every suggestions message produced from host frames out to connected UIs.
+class Hub:
+    # Fans suggestions out to connected UIs, one stream per project.
     def __init__(self):
         self.clients: set[WebSocket] = set()
-        self.latest: str | None = None
+        self.latest: dict[str, str] = {}  # project id -> last suggestions message
+        self.hosts: dict[str, int] = {}   # project id -> connected host count
 
-    async def broadcast(self, message: str):
-        self.latest = message
+    async def send_all(self, message: str):
         for ws in list(self.clients):
             try:
                 await ws.send_text(message)
             except Exception:
                 self.clients.discard(ws)
 
+    async def publish(self, project_id: str, message: str):
+        self.latest[project_id] = message
+        await self.send_all(message)
 
-hub = UiHub()
+    def open(self, project_id: str):
+        self.hosts[project_id] = self.hosts.get(project_id, 0) + 1
+
+    async def close(self, project_id: str):
+        self.hosts[project_id] -= 1
+        if self.hosts[project_id] == 0:
+            del self.hosts[project_id]
+            self.latest.pop(project_id, None)
+            await self.send_all(ProjectClosedMsg(project_id=project_id).model_dump_json())
+
+
+hub = Hub()
 
 
 async def accept(ws: WebSocket) -> bool:
@@ -48,7 +62,7 @@ def describe(err: ValidationError) -> str:
     return "; ".join(f"{'.'.join(map(str, e['loc']))}: {e['msg']}" for e in err.errors())
 
 
-async def serve(ws: WebSocket, on_frame=None):
+async def serve(ws: WebSocket, on_hello=None, on_frame=None):
     # Bad input gets an error reply; the socket stays open.
     while True:
         raw = await ws.receive_text()
@@ -64,7 +78,9 @@ async def serve(ws: WebSocket, on_frame=None):
         msg_type = data.get("type")
         try:
             if msg_type == "hello":
-                HelloMsg.model_validate(data)  # validates
+                hello = HelloMsg.model_validate(data)
+                if on_hello is not None:
+                    await on_hello(hello)
                 await ws.send_text(json.dumps({"type": "ack", "ok": True}))
             elif msg_type == "context_frame":
                 if on_frame is None:
@@ -74,7 +90,7 @@ async def serve(ws: WebSocket, on_frame=None):
             elif msg_type == "feedback":
                 fb = FeedbackMsg.model_validate(data)
                 # accept feedback (store later)
-                log.info("feedback %s %s", fb.suggestion_id, fb.verdict)
+                log.info("feedback %s %s (project %s)", fb.suggestion_id, fb.verdict, fb.project_id)
                 await ws.send_text(json.dumps({"type": "ack_feedback", "ok": True}))
             else:
                 await send_error(ws, "unknown msg type")
@@ -92,15 +108,33 @@ async def ws_host(ws: WebSocket):
     if not await accept(ws):
         return
 
+    hello: HelloMsg | None = None
+
+    async def on_hello(msg: HelloMsg):
+        nonlocal hello
+        if hello is None or hello.project.id != msg.project.id:
+            if hello is not None:
+                await hub.close(hello.project.id)
+            hub.open(msg.project.id)
+        hello = msg
+
     async def on_frame(ctx: ContextFrameMsg):
-        suggestions = build_suggestions(ctx).model_dump_json()
+        if hello is None:
+            await send_error(ws, "send hello before context_frame")
+            return
+        msg = build_suggestions(ctx)
+        msg.project_id, msg.host = hello.project.id, hello.host.name
+        suggestions = msg.model_dump_json()
         await ws.send_text(suggestions)
-        await hub.broadcast(suggestions)
+        await hub.publish(hello.project.id, suggestions)
 
     try:
-        await serve(ws, on_frame)
+        await serve(ws, on_hello, on_frame)
     except WebSocketDisconnect:
         return
+    finally:
+        if hello is not None:
+            await hub.close(hello.project.id)
 
 
 @app.websocket("/ws/ui")
@@ -109,8 +143,8 @@ async def ws_ui(ws: WebSocket):
         return
     hub.clients.add(ws)
     try:
-        if hub.latest:
-            await ws.send_text(hub.latest)
+        for message in list(hub.latest.values()):
+            await ws.send_text(message)
         await serve(ws)
     except WebSocketDisconnect:
         return

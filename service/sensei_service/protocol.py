@@ -47,9 +47,8 @@ class FeedbackMsg(BaseModel):
     type: Literal["feedback"]
     suggestion_id: str
     verdict: Literal["accepted", "rejected", "modified"]
+    project_id: Optional[str] = None
     notes: Optional[str] = None
-
-InboundMsg = HelloMsg | ContextFrameMsg | FeedbackMsg
 
 class Action(BaseModel):
     op: str
@@ -66,4 +65,10 @@ class SuggestionItem(BaseModel):
 class SuggestionsMsg(BaseModel):
     type: Literal["suggestions"] = "suggestions"
     ts: int
+    project_id: str = ""
+    host: str = ""
     items: list[SuggestionItem]
+
+class ProjectClosedMsg(BaseModel):
+    type: Literal["project_closed"] = "project_closed"
+    project_id: str

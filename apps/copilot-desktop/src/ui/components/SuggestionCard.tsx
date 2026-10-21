@@ -1,15 +1,13 @@
-import React, { useState } from "react";
+import React from "react";
+import type { Suggestion, Verdict } from "../types";
 
-type Verdict = "accepted" | "rejected";
+type Props = {
+  s: Suggestion;
+  status: "idle" | Verdict;
+  onFeedback: (verdict: Verdict) => void;
+};
 
-export default function SuggestionCard({ s, onFeedback }: { s: any; onFeedback: (verdict: Verdict) => void }) {
-  const [status, setStatus] = useState<"idle" | Verdict>("idle");
-
-  const sendFeedback = (verdict: Verdict) => {
-    setStatus(verdict);
-    onFeedback(verdict);
-  };
-
+export default function SuggestionCard({ s, status, onFeedback }: Props) {
   return (
     <div style={{
       border: "1px solid rgba(0,0,0,0.12)",
@@ -28,10 +26,10 @@ export default function SuggestionCard({ s, onFeedback }: { s: any; onFeedback: 
       </div>
 
       <div style={{ display: "flex", gap: 8, marginTop: 12 }}>
-        <button disabled={status !== "idle"} onClick={() => sendFeedback("accepted")}>
+        <button disabled={status !== "idle"} onClick={() => onFeedback("accepted")}>
           Apply
         </button>
-        <button disabled={status !== "idle"} onClick={() => sendFeedback("rejected")}>
+        <button disabled={status !== "idle"} onClick={() => onFeedback("rejected")}>
           Dismiss
         </button>
         {status !== "idle" && <span style={{ opacity: 0.7 }}>✓ {status}</span>}

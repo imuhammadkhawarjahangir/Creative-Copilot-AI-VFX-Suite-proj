@@ -3,8 +3,10 @@
 Transport: WebSocket JSON
 
 ## Endpoints
-- `/ws/host` — editing hosts. Send `hello`, `context_frame`, `feedback`. Each `context_frame` is answered with `suggestions` on the same socket.
-- `/ws/ui` — copilot UIs. Send `hello`, `feedback`. Receive the latest `suggestions` on connect, then every `suggestions` message produced from any host's frames.
+- `/ws/host` — editing hosts. Send `hello` first (it registers the host's project), then `context_frame` and `feedback`. Each `context_frame` is answered with `suggestions` on the same socket; a frame sent before `hello` gets an `error`.
+- `/ws/ui` — copilot UIs. Send `hello`, `feedback`. On connect, receive the latest `suggestions` of every open project; then every `suggestions` message produced from any host's frames, and `project_closed` when the last host of a project disconnects.
+
+Suggestions are scoped per project: each `suggestions` message carries the `project_id` and `host` name from that host's `hello`, so a UI can keep one stream per project.
 - `GET /health` — `{"ok": true}`
 
 WebSocket handshakes that carry a browser `Origin` not listed in `SENSEI_ALLOWED_ORIGINS` (comma-separated, default `http://127.0.0.1:5180,http://localhost:5180`) are rejected with HTTP 403. Native clients such as host adapters send no `Origin` and are accepted.
@@ -44,6 +46,8 @@ WebSocket handshakes that carry a browser `Origin` not listed in `SENSEI_ALLOWED
 {
   "type": "suggestions",
   "ts": 1730000001,
+  "project_id": "p1",
+  "host": "mock-host",
   "items": [
     {
       "id": "sug_001",
@@ -65,10 +69,11 @@ Items are ordered by confidence, highest first. An item's `id` is derived from i
 {
   "type": "feedback",
   "suggestion_id": "sug_001",
-  "verdict": "accepted"
+  "verdict": "accepted",
+  "project_id": "p1"
 }
 
-`verdict` is one of `accepted`, `rejected`, `modified`; optional `notes` string.
+`verdict` is one of `accepted`, `rejected`, `modified`; `project_id` and `notes` are optional.
 
 ## Service replies
 ### ack (to hello)
@@ -76,6 +81,10 @@ Items are ordered by confidence, highest first. An item's `id` is derived from i
 
 ### ack_feedback (to feedback)
 { "type": "ack_feedback", "ok": true }
+
+### project_closed (to UIs)
+Sent when the last host of a project disconnects; the project's latest suggestions are dropped.
+{ "type": "project_closed", "project_id": "p1" }
 
 ### error
 Sent for invalid JSON, a failed validation, or an unknown `type`. The connection stays open.

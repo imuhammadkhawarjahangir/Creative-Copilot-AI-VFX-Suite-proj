@@ -21,10 +21,20 @@ FRAME = {
 }
 
 
+def hello(project_id="p", host="test"):
+    return {**HELLO, "host": {"name": host, "version": "0"}, "project": {"id": project_id, "fps": 24}}
+
+
+def start_host(host, project_id="p", name="test"):
+    host.send_json(hello(project_id, name))
+    assert host.receive_json() == ACK
+
+
 @pytest.fixture
 def client():
     hub.clients.clear()
-    hub.latest = None
+    hub.latest.clear()
+    hub.hosts.clear()
     return TestClient(app)
 
 
@@ -36,20 +46,61 @@ def test_host_frame_is_broadcast_to_ui(client):
     with client.websocket_connect("/ws/ui") as ui, client.websocket_connect("/ws/host") as host:
         ui.send_json(HELLO)
         assert ui.receive_json() == ACK  # ui is registered with the hub
+        start_host(host)
 
         host.send_json(FRAME)
         to_host = host.receive_json()
         assert to_host["type"] == "suggestions"
+        assert (to_host["project_id"], to_host["host"]) == ("p", "test")
         assert [i["kind"] for i in to_host["items"]] == ["color_grade", "vfx", "transition", "keyframe"]
         assert ui.receive_json() == to_host
 
 
 def test_ui_gets_latest_suggestions_on_connect(client):
     with client.websocket_connect("/ws/host") as host:
+        start_host(host)
         host.send_json(FRAME)
         latest = host.receive_json()
+        with client.websocket_connect("/ws/ui") as ui:
+            assert ui.receive_json() == latest
+
+
+def test_frame_before_hello_is_rejected(client):
+    with client.websocket_connect("/ws/host") as host:
+        host.send_json(FRAME)
+        assert "send hello before context_frame" in host.receive_json()["message"]
+
+
+def test_projects_are_separate_streams(client):
+    with client.websocket_connect("/ws/host") as a, client.websocket_connect("/ws/host") as b:
+        start_host(a, "edit", "premiere")
+        start_host(b, "grade", "resolve")
+        a.send_json(FRAME)
+        a.receive_json()
+        b.send_json({**FRAME, "scene": {**FRAME["scene"], "emotion": "calm", "lighting": "day"}})
+        b.receive_json()
+
+        with client.websocket_connect("/ws/ui") as ui:
+            streams = {m["project_id"]: m for m in (ui.receive_json(), ui.receive_json())}
+        assert streams["edit"]["host"] == "premiere"
+        assert streams["grade"]["host"] == "resolve"
+        assert streams["edit"]["items"] != streams["grade"]["items"]
+
+
+def test_ui_is_told_when_a_project_closes(client):
     with client.websocket_connect("/ws/ui") as ui:
-        assert ui.receive_json() == latest
+        ui.send_json(HELLO)
+        assert ui.receive_json() == ACK
+        with client.websocket_connect("/ws/host") as host:
+            start_host(host)
+            host.send_json(FRAME)
+            host.receive_json()
+            assert ui.receive_json()["type"] == "suggestions"
+        assert ui.receive_json() == {"type": "project_closed", "project_id": "p"}
+
+    with client.websocket_connect("/ws/ui") as ui:
+        ui.send_json(HELLO)
+        assert ui.receive_json() == ACK  # closed project is no longer replayed on connect
 
 
 def test_suggestion_ids_are_stable_and_content_based():

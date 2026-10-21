@@ -8,7 +8,7 @@ from .clients import authenticate
 from .config import settings
 from .feedback import FeedbackStore, arm_of
 from .protocol import (ActionOutcomeMsg, ActionResultMsg, ApplyActionMsg, ApplyMsg, ContextFrameMsg,
-                       FeedbackMsg, HelloMsg, ProjectClosedMsg, checked_params)
+                       FeedbackAckMsg, FeedbackMsg, HelloMsg, ProjectClosedMsg, checked_params)
 from .engine.suggest import build_suggestions
 
 log = logging.getLogger("uvicorn.error")
@@ -346,8 +346,8 @@ async def ws_ui(ws: WebSocket):
     async def on_feedback(data: dict):
         fb = FeedbackMsg.model_validate(data)
         problem = record_vote(client, fb.project_id, fb.suggestion_id, fb.verdict)
-        await reply(json.dumps({"type": "ack_feedback", "ok": True} if problem is None else
-                               {"type": "ack_feedback", "ok": False, "detail": problem}))
+        await reply(FeedbackAckMsg(ok=problem is None, project_id=fb.project_id, suggestion_id=fb.suggestion_id,
+                                   detail=problem).model_dump_json())
 
     try:
         await ws.accept(subprotocol=subprotocol or None)

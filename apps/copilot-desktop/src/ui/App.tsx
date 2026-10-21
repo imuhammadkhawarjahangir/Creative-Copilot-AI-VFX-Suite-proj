@@ -7,11 +7,19 @@ type ProjectStream = { host: string; items: Suggestion[] };
 // used when the page runs outside Electron (no preload); Electron passes SENSEI_SERVICE_URL instead
 const DEFAULT_SERVICE_URL = "ws://127.0.0.1:8000";
 
+function without<T>(record: Record<string, T>, key: string): Record<string, T> {
+  const next = { ...record };
+  delete next[key];
+  return next;
+}
+
 export default function App() {
   const [projects, setProjects] = useState<Record<string, ProjectStream>>({});
   // keyed by "<project>/<suggestion id>" so a verdict survives the card being remounted
   const [verdicts, setVerdicts] = useState<Record<string, Verdict>>({});
   const [outcomes, setOutcomes] = useState<Record<string, ActionOutcome>>({});
+  // why the service didn't record a Dismiss, by the same key
+  const [refusals, setRefusals] = useState<Record<string, string>>({});
   const [connected, setConnected] = useState(false);
   const wsRef = useRef<WebSocket | null>(null);
 
@@ -38,14 +46,22 @@ export default function App() {
           if (msg.type === "suggestions") {
             setProjects((prev) => ({ ...prev, [msg.project_id]: { host: msg.host, items: msg.items } }));
           } else if (msg.type === "action_result") {
+            const key = `${msg.project_id}/${msg.suggestion_id}`;
             const outcome: ActionOutcome = { status: msg.status, detail: msg.detail };
-            setOutcomes((prev) => ({ ...prev, [`${msg.project_id}/${msg.suggestion_id}`]: outcome }));
+            setOutcomes((prev) => ({ ...prev, [key]: outcome }));
+            // "failed" (sent only to the UI that applied): nothing was sent or recorded, so it can be decided again
+            if (msg.status === "failed") setVerdicts((prev) => without(prev, key));
+          } else if (msg.type === "ack_feedback") {
+            if (!msg.ok) {
+              // not recorded (the suggestion changed meanwhile): undo the verdict and say why
+              const key = `${msg.project_id}/${msg.suggestion_id}`;
+              setVerdicts((prev) => without(prev, key));
+              setRefusals((prev) => ({ ...prev, [key]: msg.detail }));
+            }
+          } else if (msg.type === "error") {
+            console.warn("[sensei] the service refused a message:", msg.message);
           } else if (msg.type === "project_closed") {
-            setProjects((prev) => {
-              const next = { ...prev };
-              delete next[msg.project_id];
-              return next;
-            });
+            setProjects((prev) => without(prev, msg.project_id));
           }
         } catch {}
       };
@@ -70,7 +86,8 @@ export default function App() {
   }, []);
 
   // Apply asks the service to send the suggestion's action to the host (the outcome arrives as
-  // action_result); Dismiss is plain feedback.
+  // action_result); Dismiss is plain feedback. The verdict shows at once and is undone if the
+  // service refuses it.
   const decide = (projectId: string, suggestionId: string, verdict: Verdict) => {
     const ws = wsRef.current;
     // Only show a verdict the service actually received; the buttons are disabled while disconnected.
@@ -78,7 +95,11 @@ export default function App() {
     ws.send(JSON.stringify(verdict === "accepted"
       ? { type: "apply", project_id: projectId, suggestion_id: suggestionId }
       : { type: "feedback", suggestion_id: suggestionId, verdict, project_id: projectId }));
-    setVerdicts((prev) => ({ ...prev, [`${projectId}/${suggestionId}`]: verdict }));
+    const key = `${projectId}/${suggestionId}`;
+    setVerdicts((prev) => ({ ...prev, [key]: verdict }));
+    // what the card said about an earlier attempt that didn't go through no longer applies
+    setRefusals((prev) => without(prev, key));
+    setOutcomes((prev) => (prev[key]?.status === "failed" ? without(prev, key) : prev));
   };
 
   const projectIds = Object.keys(projects).sort();
@@ -108,6 +129,7 @@ export default function App() {
                 s={s}
                 status={verdicts[`${projectId}/${s.id}`] ?? "idle"}
                 outcome={outcomes[`${projectId}/${s.id}`]}
+                refused={refusals[`${projectId}/${s.id}`]}
                 disabled={!connected}
                 onFeedback={(verdict) => decide(projectId, s.id, verdict)}
               />

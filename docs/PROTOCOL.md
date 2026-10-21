@@ -113,10 +113,11 @@ An action describes an edit. These are the only ops a host is ever asked to perf
 { "type": "ack", "ok": true }
 
 ### ack_feedback (to feedback)
-{ "type": "ack_feedback", "ok": true }
+{ "type": "ack_feedback", "ok": true, "project_id": "p1", "suggestion_id": "sug_001", "detail": null }
 
-Feedback on a suggestion that isn't current is not stored:
-{ "type": "ack_feedback", "ok": false, "detail": "this suggestion is no longer current" }
+Feedback on a suggestion that isn't current is not stored. The reply names the suggestion, so a UI can undo a
+verdict it already showed:
+{ "type": "ack_feedback", "ok": false, "project_id": "p1", "suggestion_id": "sug_001", "detail": "this suggestion is no longer current" }
 
 ### project_closed (to UIs)
 Sent when the last host of a project disconnects; the project's latest suggestions are dropped.

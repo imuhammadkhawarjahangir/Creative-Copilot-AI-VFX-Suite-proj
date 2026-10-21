@@ -56,6 +56,13 @@ class FeedbackMsg(BaseModel):
     project_id: ProjectId
     notes: Optional[Annotated[str, StringConstraints(max_length=1000)]] = None
 
+class FeedbackAckMsg(BaseModel):  # service -> UI; names the suggestion so the UI can undo a refused verdict
+    type: Literal["ack_feedback"] = "ack_feedback"
+    ok: bool
+    project_id: str
+    suggestion_id: str
+    detail: Optional[str] = None
+
 class Action(BaseModel):
     op: str
     params: dict[str, Any] = {}

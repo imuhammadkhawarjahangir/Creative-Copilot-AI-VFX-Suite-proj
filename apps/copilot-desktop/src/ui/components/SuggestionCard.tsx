@@ -5,6 +5,7 @@ type Props = {
   s: Suggestion;
   status: "idle" | Verdict;
   outcome?: ActionOutcome;
+  refused?: string; // why the service didn't record a Dismiss
   disabled: boolean;
   onFeedback: (verdict: Verdict) => void;
 };
@@ -17,7 +18,7 @@ const OUTCOME_TEXT: Record<ActionOutcome["status"], string> = {
   failed: "Couldn't apply"
 };
 
-export default function SuggestionCard({ s, status, outcome, disabled, onFeedback }: Props) {
+export default function SuggestionCard({ s, status, outcome, refused, disabled, onFeedback }: Props) {
   return (
     <div style={{
       border: "1px solid rgba(0,0,0,0.12)",
@@ -47,6 +48,11 @@ export default function SuggestionCard({ s, status, outcome, disabled, onFeedbac
       {outcome && (
         <div className="outcome" style={{ marginTop: 8, fontSize: 12, opacity: 0.8 }}>
           {OUTCOME_TEXT[outcome.status]}{outcome.detail ? `: ${outcome.detail}` : ""}
+        </div>
+      )}
+      {refused && (
+        <div className="refused" style={{ marginTop: 8, fontSize: 12, opacity: 0.8 }}>
+          Dismiss wasn't recorded: {refused}
         </div>
       )}
     </div>

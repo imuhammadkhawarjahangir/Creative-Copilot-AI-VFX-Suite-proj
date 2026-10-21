@@ -120,7 +120,8 @@ def test_feedback_over_the_wire_changes_later_suggestions(client):
         vfx = open_project(host, ui)
         for _ in range(3):
             ui.send_json({"type": "feedback", "suggestion_id": vfx["id"], "verdict": "rejected", "project_id": "p"})
-            assert ui.receive_json() == {"type": "ack_feedback", "ok": True}
+            assert ui.receive_json() == {"type": "ack_feedback", "ok": True, "project_id": "p",
+                                         "suggestion_id": vfx["id"], "detail": None}
 
         host.send_json(FRAME)
         later = next(i for i in host.receive_json()["items"] if i["kind"] == "vfx")
@@ -143,8 +144,9 @@ def test_feedback_on_a_suggestion_that_isnt_current_is_not_stored(client):
         for project_id, suggestion_id in [("p", "sug_00000000"), ("not-open", vfx["id"])]:
             ui.send_json({"type": "feedback", "suggestion_id": suggestion_id, "verdict": "rejected",
                           "project_id": project_id})
-            assert ui.receive_json() == {"type": "ack_feedback", "ok": False,
-                                         "detail": "this suggestion is no longer current"}
+            # the reply names the suggestion, so the UI can undo the verdict it showed
+            assert ui.receive_json() == {"type": "ack_feedback", "ok": False, "project_id": project_id,
+                                         "suggestion_id": suggestion_id, "detail": "this suggestion is no longer current"}
     assert main.store.db.execute("SELECT COUNT(*) FROM votes").fetchone() == (0,)
 
 

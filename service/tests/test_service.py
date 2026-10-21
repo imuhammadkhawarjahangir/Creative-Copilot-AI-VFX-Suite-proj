@@ -146,7 +146,8 @@ def test_bad_input_gets_error_and_socket_stays_open(client, payload, expected):
 def test_feedback_is_validated(client):
     with client.websocket_connect("/ws/ui") as ui:
         ui.send_json({"type": "feedback", "suggestion_id": "sug_1234abcd", "verdict": "accepted", "project_id": "p"})
-        assert ui.receive_json() == {"type": "ack_feedback", "ok": False, "detail": "this suggestion is no longer current"}
+        assert ui.receive_json() == {"type": "ack_feedback", "ok": False, "project_id": "p",
+                                     "suggestion_id": "sug_1234abcd", "detail": "this suggestion is no longer current"}
 
         ui.send_json({"type": "feedback", "verdict": "loved it"})
         reply = ui.receive_json()

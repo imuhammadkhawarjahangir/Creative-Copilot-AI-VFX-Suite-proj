@@ -21,7 +21,7 @@ class HelloMsg(BaseModel):
     project: ProjectInfo
 
 class SceneCtx(BaseModel):
-    shot_id: str
+    shot_id: Label  # the clip under the playhead, as the host can find it again (grades and effects target it)
     emotion: Optional[str] = None
     lighting: Optional[str] = None
     notes: Optional[str] = None
@@ -97,6 +97,7 @@ class BoundedParams(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
 class ColorGradeParams(BoundedParams):
+    shot: Label  # the scene's shot_id: the clip it was suggested for, not whichever is under the playhead later
     lut: PresetName
     contrast: Annotated[float, Field(ge=0.5, le=2.0)]
     sat: Annotated[float, Field(ge=0.0, le=2.0)]
@@ -113,6 +114,7 @@ class KeyframeParams(BoundedParams):
     target: Literal["next_keyframe"]
 
 class VfxParams(BoundedParams):
+    shot: Label
     preset: PresetName
     threshold: Unit
     intensity: Unit

@@ -10,15 +10,15 @@ context to `/ws/host` while you work, and carries out the suggestions you apply 
 | Playhead | `Timeline.GetCurrentTimecode()`, read 4 times a second (on the Cut, Edit, Color and Deliver pages). |
 | Clips and cuts | Video track 1: every clip after the first starts with a cut. Re-read every 2 seconds; only the 30 seconds either side of the playhead are sent. |
 | Beats | Timeline markers of one colour: **Blue** by default (the colour of markers you tap with `M` during playback). |
-| Scene | The clip under the playhead: its name; keywords `emotion:<word>` and `lighting:<word>` in its metadata (e.g. `emotion:tense`, `lighting:low-key`); its Description and Comments as notes. |
+| Scene | The clip under the playhead: its unique id (the `shot_id`); keywords `emotion:<word>` and `lighting:<word>` in its metadata (e.g. `emotion:tense`, `lighting:low-key`); its Description and Comments as notes. |
 
 ## What applying does
 | Suggestion | In Resolve | Reported as |
 |------------|-----------|-------------|
-| Color grade | Sets an ASC CDL on node 1 of the clip under the playhead, approximating the suggested look (contrast, saturation, shadow and highlight tints) | `applied` |
+| Color grade | Sets an ASC CDL on node 1 of the clip it was suggested for (wherever the playhead is now), approximating the suggested look (contrast, saturation, shadow and highlight tints) | `applied` |
 | Transition at a cut | Leaves a marker on the cut saying which transition to add | `marked` |
 | Snap keyframe to beat | Leaves a marker on the beat | `marked` |
-| VFX preset | Leaves a marker on the clip with the preset and its settings | `marked` |
+| VFX preset | Leaves a marker on the clip it was suggested for, with the preset and its settings | `marked` |
 
 Resolve's scripting API has no calls to add transitions, keyframes or effects, so those suggestions become notes
 for the editor. Every action leaves a purple marker whose custom data is `sensei:<action id>`; an action already on

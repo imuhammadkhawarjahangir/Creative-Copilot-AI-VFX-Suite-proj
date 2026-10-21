@@ -49,6 +49,8 @@ Setting both is refused at startup; setting neither leaves auth off.
   }
 }
 
+`scene.shot_id` names the clip under the playhead in a way the host can find it again (1–64 characters, no control characters): grades and effects suggested for this frame carry it as `shot`.
+
 ## Service -> Host/UI
 
 ### suggestions
@@ -66,7 +68,7 @@ Setting both is refused at startup; setting neither leaves auth off.
       "rationale": "Tense emotion and low-key lighting benefit from cooler shadows and controlled warmth.",
       "action": {
         "op": "apply_color_grade",
-        "params": { "lut": "teal_orange_07", "contrast": 1.1, "sat": 0.92, "shadow_tint": "teal", "highlight_tint": "warm" }
+        "params": { "shot": "A012_C003", "lut": "teal_orange_07", "contrast": 1.1, "sat": 0.92, "shadow_tint": "teal", "highlight_tint": "warm" }
       }
     }
   ]
@@ -81,10 +83,12 @@ An action describes an edit. These are the only ops a host is ever asked to perf
 
 | `op` | `params` (bounds) |
 |------|----------|
-| `apply_color_grade` | `lut` (`[a-z0-9_]{1,64}`), `contrast` (0.5–2), `sat` (0–2), optional `shadow_tint`, `highlight_tint` (`teal` or `warm`) |
+| `apply_color_grade` | `shot` (the frame's `scene.shot_id`), `lut` (`[a-z0-9_]{1,64}`), `contrast` (0.5–2), `sat` (0–2), optional `shadow_tint`, `highlight_tint` (`teal` or `warm`) |
 | `apply_transition_at_cut` | `type` (`dip_to_black` or `cross_dissolve`), `frames` (1–48), `at` (cut time, ≥ 0) |
 | `snap_keyframe_to_time` | `time` (the next beat, ≥ 0), `target` (`next_keyframe`) |
-| `apply_vfx_preset` | `preset` (`[a-z0-9_]{1,64}`), `threshold`, `intensity`, `radius` (0–1) |
+| `apply_vfx_preset` | `shot` (the frame's `scene.shot_id`), `preset` (`[a-z0-9_]{1,64}`), `threshold`, `intensity`, `radius` (0–1) |
+
+A grade or effect is for the shot it was suggested for, not whichever clip is under the playhead when it is applied, so the host must apply it to the clip `shot` names, and reject it if that clip is gone.
 
 ## Applying a suggestion
 

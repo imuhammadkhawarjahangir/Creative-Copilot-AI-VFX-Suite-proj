@@ -24,14 +24,16 @@ def test_timecodes_become_frames(timecode, fps, frame):
 
 
 def test_the_open_timeline_becomes_a_valid_hello_and_context_frame():
-    hello, frame = reader_for(scene_timeline()).read()
+    timeline = scene_timeline()
+    hello, frame = reader_for(timeline).read()
     HelloMsg.model_validate(hello)  # the service's own models
     ContextFrameMsg.model_validate({**frame, "ts": 0})
     assert hello["project"]["fps"] == 24.0
     assert hello["project"]["id"].startswith("Night-Shoot.Edit-v3-")
 
     assert frame["playhead"] == 14.0
-    assert frame["scene"] == {"shot_id": "A012_C003", "emotion": "tense", "lighting": "low-key",
+    # the shot is the clip's unique id, so a grade suggested for it can find it again
+    assert frame["scene"] == {"shot_id": timeline.items[1].uid, "emotion": "tense", "lighting": "low-key",
                               "notes": "night interior, neon spill"}
     assert [c["label"] for c in frame["timeline"]["clips"]] == ["A012_C002", "A012_C003", "A012_C004"]  # within 30s
     assert frame["timeline"]["cuts"] == [10.0, 14.208]
@@ -81,13 +83,16 @@ def test_no_timeline_no_playhead_and_quitting():
 def test_a_clip_without_metadata_still_has_a_scene():
     item = FakeTimelineItem("Plain", 86400, 86500, FakeMediaPoolItem("plain.mov"))
     _, frame = reader_for(FakeTimeline("t", [item], playhead=10)).read()
-    assert frame["scene"] == {"shot_id": "Plain"}
+    assert frame["scene"] == {"shot_id": item.uid}
     _, frame = reader_for(FakeTimeline("t", [], playhead=10)).read()
     assert frame["scene"] == {"shot_id": "none"}
 
 
-GRADE = {"action_id": "act_aaaaaaaaaaaa", "suggestion_id": "sug_00000001", "op": "apply_color_grade",
-         "params": {"lut": "teal_orange_07", "contrast": 1.1, "sat": 0.92, "shadow_tint": "teal", "highlight_tint": "warm"}}
+def grade(timeline, item=1):
+    # the grade suggested while the playhead was on timeline.items[item]
+    return {"action_id": "act_aaaaaaaaaaaa", "suggestion_id": "sug_00000001", "op": "apply_color_grade",
+            "params": {"shot": timeline.items[item].uid, "lut": "teal_orange_07", "contrast": 1.1, "sat": 0.92,
+                       "shadow_tint": "teal", "highlight_tint": "warm"}}
 
 
 def apply(reader, action, applied=None):
@@ -101,7 +106,7 @@ def apply(reader, action, applied=None):
 
 def test_a_grade_sets_a_cdl_on_the_clip_and_marks_it():
     timeline = scene_timeline()
-    result = apply(reader_for(timeline), GRADE)
+    result = apply(reader_for(timeline), grade(timeline))
     assert result["status"] == "applied" and "A012_C003" in result["detail"]
     assert timeline.items[1].cdl == {"NodeIndex": "1", "Slope": "1.1440 1.1110 1.0670",
                                      "Offset": "-0.0800 -0.0400 -0.0100", "Power": "1.0000 1.0000 1.0000",
@@ -111,10 +116,10 @@ def test_a_grade_sets_a_cdl_on_the_clip_and_marks_it():
 
 def test_an_action_is_carried_out_once_even_after_a_restart():
     timeline = scene_timeline()
-    reader, applied = reader_for(timeline), set()
-    assert apply(reader, GRADE, applied)["status"] == "applied"
-    assert apply(reader, GRADE, applied)["status"] == "duplicate"
-    assert apply(reader, GRADE, set())["status"] == "duplicate"  # a new run finds the marker
+    reader, applied, action = reader_for(timeline), set(), grade(timeline)
+    assert apply(reader, action, applied)["status"] == "applied"
+    assert apply(reader, action, applied)["status"] == "duplicate"
+    assert apply(reader, action, set())["status"] == "duplicate"  # a new run finds the marker
     assert len([m for m in timeline.markers.values() if m["customData"] == "sensei:act_aaaaaaaaaaaa"]) == 1
 
 
@@ -132,20 +137,32 @@ def test_transitions_keyframes_and_effects_leave_markers():
     assert timeline.markers[351.0]["customData"] == "sensei:act_cccccccccccc"  # the beat marker holds frame 350
 
     vfx = apply(reader, {"action_id": "act_dddddddddddd", "suggestion_id": "sug_00000004", "op": "apply_vfx_preset",
-                         "params": {"preset": "neon_bloom_02", "threshold": 0.78, "intensity": 0.35, "radius": 0.22}})
+                         "params": {"shot": timeline.items[1].uid, "preset": "neon_bloom_02", "threshold": 0.78,
+                                    "intensity": 0.35, "radius": 0.22}})
     assert vfx["status"] == "marked"
     assert timeline.markers[240.0]["note"] == "Apply neon_bloom_02: threshold 0.78, intensity 0.35, radius 0.22"
 
 
+def test_a_grade_goes_to_the_clip_it_was_suggested_for():
+    # the editor has moved on to the next shot by the time Apply arrives
+    timeline = scene_timeline()
+    action = grade(timeline)
+    timeline.playhead = 400
+    assert apply(reader_for(timeline), action)["status"] == "applied"
+    assert timeline.items[1].cdl is not None and timeline.items[2].cdl is None
+    assert timeline.markers[240.0]["customData"] == "sensei:act_aaaaaaaaaaaa"
+
+
 @pytest.mark.parametrize("change, detail", [
-    (lambda t, a: setattr(t, "playhead", 700), "no video clip under the playhead"),
+    (lambda t, a: a["params"].update(shot="removed-clip"), "the clip it was suggested for is no longer on the timeline"),
     (lambda t, a: a.update(op="delete_timeline"), "unsupported op delete_timeline"),
     (lambda t, a: a["params"].update(shadow_tint="purple"), "invalid params"),
     (lambda t, a: a["params"].pop("lut"), "invalid params"),
     (lambda t, a: setattr(t.items[1], "nodes", 0), "Resolve refused the grade"),
 ])
 def test_actions_that_cant_be_carried_out_are_rejected_untouched(change, detail):
-    timeline, action = scene_timeline(), json.loads(json.dumps(GRADE))
+    timeline = scene_timeline()
+    action = grade(timeline)
     change(timeline, action)
     before = dict(timeline.markers)
     result = apply(reader_for(timeline), action)
@@ -157,13 +174,13 @@ def test_an_action_for_another_timeline_is_rejected_untouched():
     # the editor switched timelines after the suggestion was made: it must not land on this one
     timeline = scene_timeline()
     before = dict(timeline.markers)
-    result = apply(reader_for(timeline), {**GRADE, "project_id": "Night-Shoot.Edit-v2-abcdef"})
+    result = apply(reader_for(timeline), {**grade(timeline), "project_id": "Night-Shoot.Edit-v2-abcdef"})
     assert result["status"] == "rejected" and result["detail"].startswith("this action is for Night-Shoot.Edit-v2-abcdef")
     assert timeline.items[1].cdl is None and timeline.markers == before
 
 
 def test_actions_need_an_open_timeline():
-    assert apply(reader_for(None), GRADE) == {"type": "action_result", "action_id": "act_aaaaaaaaaaaa",
+    assert apply(reader_for(None), grade(scene_timeline())) == {"type": "action_result", "action_id": "act_aaaaaaaaaaaa",
                                               "status": "rejected", "detail": "no timeline is open"}
 
 

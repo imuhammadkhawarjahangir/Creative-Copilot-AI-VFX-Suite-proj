@@ -155,7 +155,9 @@ def test_engine_actions_are_within_bounds(playhead, emotion, lighting, notes):
 
 @pytest.mark.parametrize("op, params", [
     ("apply_vfx_preset", {"preset": "neon_bloom_02", "threshold": 0.78, "intensity": 5, "radius": 0.22}),
-    ("apply_color_grade", {"lut": "../../etc/passwd", "contrast": 1.1, "sat": 0.9}),
+    ("apply_color_grade", {"shot": "A012_C003", "lut": "../../etc/passwd", "contrast": 1.1, "sat": 0.9}),
+    ("apply_color_grade", {"lut": "teal_orange_07", "contrast": 1.1, "sat": 0.9}),  # no target clip
+    ("apply_color_grade", {"shot": "A012\nC003", "lut": "teal_orange_07", "contrast": 1.1, "sat": 0.9}),
     ("apply_transition_at_cut", {"type": "cross_dissolve", "frames": 8, "at": 14.2, "extra": 1}),
     ("delete_timeline", {}),
 ])

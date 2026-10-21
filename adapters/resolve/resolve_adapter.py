@@ -92,13 +92,14 @@ def text(value, limit: int) -> str:
 
 
 def scene_of(item) -> dict:
-    # The clip under the playhead: its name, and what its metadata says. Keywords such as
-    # "emotion:tense" and "lighting:low-key" set the mood; Description and Comments are the notes.
+    # The clip under the playhead: its unique id (so a grade or effect suggested for it can find it
+    # again), and what its metadata says. Keywords such as "emotion:tense" and "lighting:low-key"
+    # set the mood; Description and Comments are the notes.
     if item is None:
         return {"shot_id": "none"}
     media = item.GetMediaPoolItem()
     metadata = (media.GetMetadata() or {}) if media is not None else {}
-    scene = {"shot_id": text(item.GetName(), 64) or "untitled"}
+    scene = {"shot_id": text(item.GetUniqueId(), 64) or "none"}
     for keyword in re.split(r"[,;]", metadata.get("Keywords", "")):
         key, sep, value = keyword.partition(":")
         if sep and key.strip().lower() in ("emotion", "lighting") and value.strip():
@@ -209,11 +210,21 @@ def cdl_for(params: dict) -> dict:
             "Saturation": f"{float(params['sat']):.4f}"}
 
 
+def suggested_clip(timeline, shot: str):
+    # The clip a grade or effect was suggested for (the scene's shot_id is its unique id), wherever
+    # the playhead is now; None once it has left the timeline.
+    for track in range(1, int(timeline.GetTrackCount("video") or 0) + 1):
+        for item in timeline.GetItemListInTrack("video", track) or []:
+            if text(item.GetUniqueId(), 64) == shot:
+                return item
+    return None
+
+
 def apply_color_grade(timeline, fps, params, tag):
     look, cdl = params["lut"], cdl_for(params)  # bad params are rejected before anything changes
-    item = timeline.GetCurrentVideoItem()
+    item = suggested_clip(timeline, params["shot"])
     if item is None:
-        return "rejected", "no video clip under the playhead"
+        return "rejected", "the clip it was suggested for is no longer on the timeline"
     if not item.SetCDL(cdl):
         return "rejected", "Resolve refused the grade"
     leave_marker(timeline, item.GetStart() - timeline.GetStartFrame(), "SENSEI grade",
@@ -236,9 +247,9 @@ def snap_keyframe_to_time(timeline, fps, params, tag):
 
 def apply_vfx_preset(timeline, fps, params, tag):
     # Nor effects: mark the clip with the preset and its settings.
-    item = timeline.GetCurrentVideoItem()
+    item = suggested_clip(timeline, params["shot"])
     if item is None:
-        return "rejected", "no video clip under the playhead"
+        return "rejected", "the clip it was suggested for is no longer on the timeline"
     note = (f"Apply {params['preset']}: threshold {float(params['threshold']):.2f}, "
             f"intensity {float(params['intensity']):.2f}, radius {float(params['radius']):.2f}")
     return marked(timeline, item.GetStart() - timeline.GetStartFrame(), "SENSEI effect", note, tag, fps)

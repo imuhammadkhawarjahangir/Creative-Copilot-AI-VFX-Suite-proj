@@ -13,6 +13,8 @@ def build_suggestions(context) -> SuggestionsMsg:
     items += suggest_transitions(context)
     items += suggest_rhythm_keyframes(context)
     items += suggest_vfx(context)
+    # ranked: most confident first (stable, so ties keep rule order)
+    items.sort(key=lambda it: it.confidence, reverse=True)
 
     # ids derive from content, so a suggestion keeps its id across frames
     for it in items:

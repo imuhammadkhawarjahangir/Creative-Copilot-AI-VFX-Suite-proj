@@ -59,7 +59,7 @@ WebSocket handshakes that carry a browser `Origin` not listed in `SENSEI_ALLOWED
   ]
 }
 
-An item's `id` is derived from its content, so an unchanged suggestion keeps its id across frames.
+Items are ordered by confidence, highest first. An item's `id` is derived from its content, so an unchanged suggestion keeps its id across frames. Times in action params (`time`, `at`) are seconds, rounded to milliseconds.
 
 ## UI/Host -> Service (feedback)
 {

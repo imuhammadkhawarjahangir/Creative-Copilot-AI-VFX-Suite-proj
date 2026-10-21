@@ -16,7 +16,7 @@ FRAME = {
     "timeline": {
         "clips": [{"id": "c1", "in": 10.0, "out": 14.2, "kind": "video"}],
         "cuts": [14.2],
-        "audio": {"bpm": 92, "beats": [13.9, 14.55]},
+        "audio": {"bpm": 92, "beats": [13.9, 14.55, 15.2]},
     },
 }
 
@@ -40,7 +40,7 @@ def test_host_frame_is_broadcast_to_ui(client):
         host.send_json(FRAME)
         to_host = host.receive_json()
         assert to_host["type"] == "suggestions"
-        assert [i["kind"] for i in to_host["items"]] == ["color_grade", "transition", "keyframe", "vfx"]
+        assert [i["kind"] for i in to_host["items"]] == ["color_grade", "vfx", "transition", "keyframe"]
         assert ui.receive_json() == to_host
 
 
@@ -58,7 +58,7 @@ def test_suggestion_ids_are_stable_and_content_based():
     assert first == {i.kind: i.id for i in build_suggestions(ctx).items}
     assert len(set(first.values())) == len(first)
 
-    later = {i.kind: i.id for i in build_suggestions(ContextFrameMsg.model_validate({**FRAME, "playhead": 14.5})).items}
+    later = {i.kind: i.id for i in build_suggestions(ContextFrameMsg.model_validate({**FRAME, "playhead": 14.6})).items}
     assert later["color_grade"] == first["color_grade"]
     assert later["keyframe"] != first["keyframe"]  # snaps to a different beat
 

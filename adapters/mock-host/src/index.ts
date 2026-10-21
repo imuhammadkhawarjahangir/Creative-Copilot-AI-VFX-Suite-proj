@@ -2,9 +2,11 @@ import WebSocket from "ws";
 import { makeFrame } from "./timeline.js";
 
 const url = process.env.SENSEI_WS_URL ?? "ws://127.0.0.1:8000/ws/host";
+// optional shared secret, presented as a WebSocket subprotocol (see docs/PROTOCOL.md)
+const protocols = process.env.SENSEI_TOKEN ? [`sensei.token.${process.env.SENSEI_TOKEN}`] : [];
 
 function connect() {
-  const ws = new WebSocket(url);
+  const ws = new WebSocket(url, protocols);
   let timer: ReturnType<typeof setInterval> | undefined;
 
   ws.on("open", () => {

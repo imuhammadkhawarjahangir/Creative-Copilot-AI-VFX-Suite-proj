@@ -2,6 +2,7 @@ import pytest
 from fastapi.testclient import TestClient
 from starlette.websockets import WebSocketDisconnect
 
+from sensei_service.config import Settings, settings
 from sensei_service.engine.suggest import build_suggestions
 from sensei_service.main import app, hub
 from sensei_service.protocol import ContextFrameMsg
@@ -161,3 +162,35 @@ def test_allowed_origin_is_accepted(client, path):
     with client.websocket_connect(path, headers={"origin": "http://127.0.0.1:5180"}) as ws:
         ws.send_json(HELLO)
         assert ws.receive_json() == ACK
+
+
+@pytest.fixture
+def token(monkeypatch):
+    monkeypatch.setattr(settings, "token", "s3cret")
+    return "s3cret"
+
+
+@pytest.mark.parametrize("path", ["/ws/host", "/ws/ui"])
+@pytest.mark.parametrize("subprotocols", [None, ["sensei.token.wrong"]])
+def test_token_is_required_when_configured(client, token, path, subprotocols):
+    with pytest.raises(WebSocketDisconnect) as exc:
+        with client.websocket_connect(path, subprotocols=subprotocols):
+            pass
+    assert exc.value.code == 1008
+
+
+def test_valid_token_is_accepted_and_echoed(client, token):
+    with client.websocket_connect("/ws/host", subprotocols=[f"sensei.token.{token}"]) as host:
+        assert host.accepted_subprotocol == f"sensei.token.{token}"
+        start_host(host)
+
+
+def test_token_subprotocol_is_echoed_when_auth_is_off(client):
+    # browsers drop the connection if an offered subprotocol is not echoed
+    with client.websocket_connect("/ws/ui", subprotocols=["sensei.token.anything"]) as ui:
+        assert ui.accepted_subprotocol == "sensei.token.anything"
+
+
+def test_token_must_be_subprotocol_safe():
+    with pytest.raises(ValueError):
+        Settings(allowed_origins=[], token="has space")

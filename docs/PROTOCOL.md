@@ -11,6 +11,9 @@ Suggestions are scoped per project: each `suggestions` message carries the `proj
 
 WebSocket handshakes that carry a browser `Origin` not listed in `SENSEI_ALLOWED_ORIGINS` (comma-separated, default `http://127.0.0.1:5180,http://localhost:5180,sensei://app`: the desktop UI's dev server and its packaged origin) are rejected with HTTP 403. Native clients such as host adapters send no `Origin` and are accepted.
 
+### Optional token
+If the service is started with `SENSEI_TOKEN` set (letters, digits, `.`, `_`, `~`, `-`), every WebSocket client must offer the subprotocol `sensei.token.<token>`; a missing or wrong token is rejected with HTTP 403. The service echoes the offered subprotocol back. The token travels as a subprotocol, not a header or query string, because browsers cannot set WebSocket headers and query strings end up in logs.
+
 ## Host -> Service
 
 ### hello

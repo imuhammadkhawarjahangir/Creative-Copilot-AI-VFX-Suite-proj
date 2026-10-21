@@ -1,4 +1,4 @@
-import { app, BrowserWindow, net, protocol } from "electron";
+import { app, BrowserWindow, ipcMain, net, protocol } from "electron";
 import path from "path";
 import { fileURLToPath, pathToFileURL } from "url";
 
@@ -34,6 +34,7 @@ function createWindow() {
     width: 980,
     height: 720,
     webPreferences: {
+      preload: path.join(__dirname, "preload.cjs"),
       contextIsolation: true,
       nodeIntegration: false,
       sandbox: true
@@ -55,6 +56,12 @@ function load(win) {
     if (!win.isDestroyed()) setTimeout(() => load(win), 500);
   });
 }
+
+// The page gets the optional service token over IPC, so it is never baked into the bundle or a URL.
+ipcMain.handle("sensei:config", (event) => {
+  if (!isUiUrl(event.senderFrame.url)) throw new Error("sensei:config is only available to the SENSEI UI");
+  return { token: process.env.SENSEI_TOKEN || null };
+});
 
 app.whenReady().then(() => {
   serveDist();

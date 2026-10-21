@@ -1,3 +1,4 @@
+import hmac
 import json
 import logging
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
@@ -43,6 +44,9 @@ class Hub:
 hub = Hub()
 
 
+TOKEN_PROTOCOL = "sensei.token."
+
+
 async def accept(ws: WebSocket) -> bool:
     # Browsers always send Origin, so this blocks other web pages (closing before accept -> HTTP 403).
     origin = ws.headers.get("origin")
@@ -50,7 +54,17 @@ async def accept(ws: WebSocket) -> bool:
         log.warning("rejected websocket from origin %s", origin)
         await ws.close(code=1008)
         return False
-    await ws.accept()
+
+    offered = [p for p in ws.scope.get("subprotocols", []) if p.startswith(TOKEN_PROTOCOL)]
+    if settings.token is not None:
+        presented = offered[0][len(TOKEN_PROTOCOL):] if offered else ""
+        if not hmac.compare_digest(presented.encode(), settings.token.encode()):
+            log.warning("rejected websocket without a valid token")
+            await ws.close(code=1008)
+            return False
+
+    # a browser drops the connection unless the subprotocol it offered is echoed back
+    await ws.accept(subprotocol=offered[0] if offered else None)
     return True
 
 

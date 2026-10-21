@@ -42,3 +42,11 @@ cd adapters/mock-host
 npm install
 npm start
 ```
+
+### Optional: require a token
+Give the service, the hosts and the desktop UI the same `SENSEI_TOKEN` (letters, digits, `.`, `_`, `~`, `-`); clients without it are rejected.
+```bash
+export SENSEI_TOKEN=$(openssl rand -hex 16)          # PowerShell: $env:SENSEI_TOKEN = [guid]::NewGuid().ToString("N")
+docker compose up --build                            # passes it to the service and the mock host
+cd apps/copilot-desktop && npm run dev               # Electron hands it to the UI
+```

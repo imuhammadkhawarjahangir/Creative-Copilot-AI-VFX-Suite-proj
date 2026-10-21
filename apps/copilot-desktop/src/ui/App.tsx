@@ -16,9 +16,11 @@ export default function App() {
   useEffect(() => {
     let stopped = false;
     let retry: ReturnType<typeof setTimeout> | undefined;
+    // optional shared secret, presented as a WebSocket subprotocol (see docs/PROTOCOL.md)
+    let protocols: string[] = [];
 
     const connect = () => {
-      const ws = new WebSocket(WS_URL);
+      const ws = new WebSocket(WS_URL, protocols);
       wsRef.current = ws;
 
       ws.onopen = () => {
@@ -54,7 +56,10 @@ export default function App() {
       };
     };
 
-    connect();
+    (window.sensei?.config() ?? Promise.resolve({ token: null })).then(({ token }) => {
+      if (token) protocols = [`sensei.token.${token}`];
+      if (!stopped) connect();
+    });
     return () => {
       stopped = true;
       clearTimeout(retry);

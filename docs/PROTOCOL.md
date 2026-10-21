@@ -53,20 +53,32 @@ If the service is started with `SENSEI_TOKEN` set (letters, digits, `.`, `_`, `~
   "host": "mock-host",
   "items": [
     {
-      "id": "sug_001",
+      "id": "sug_7bec91a2",
       "kind": "color_grade",
       "title": "Moody teal shadows + warm highlights",
       "confidence": 0.78,
-      "rationale": "Matches 'tense' emotion + neon spill lighting",
+      "rationale": "Tense emotion and low-key lighting benefit from cooler shadows and controlled warmth.",
       "action": {
         "op": "apply_color_grade",
-        "params": { "lut": "teal_orange_07", "sat": 0.92, "contrast": 1.1 }
+        "params": { "lut": "teal_orange_07", "contrast": 1.1, "sat": 0.92, "shadow_tint": "teal", "highlight_tint": "warm" }
       }
     }
   ]
 }
 
+(For the `context_frame` above the service also returns a `vfx` and a `keyframe` item; they are omitted here.)
+
 Items are ordered by confidence, highest first. An item's `id` is derived from its content, so an unchanged suggestion keeps its id across frames. Times in action params (`time`, `at`) are seconds, rounded to milliseconds.
+
+### Actions
+Actions describe an edit; no host applies them yet.
+
+| `op` | `params` |
+|------|----------|
+| `apply_color_grade` | `lut`, `contrast`, `sat`, optional `shadow_tint`, `highlight_tint` |
+| `apply_transition_at_cut` | `type` (`dip_to_black` or `cross_dissolve`), `frames`, `at` (cut time) |
+| `snap_keyframe_to_time` | `time` (the next beat), `target` (`next_keyframe`) |
+| `apply_vfx_preset` | `preset`, `threshold`, `intensity`, `radius` |
 
 ## UI/Host -> Service (feedback)
 {

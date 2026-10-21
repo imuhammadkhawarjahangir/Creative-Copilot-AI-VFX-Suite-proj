@@ -13,7 +13,7 @@ automation, and intelligent enhancements:
 - `adapters/` — Host integrations (mock host included)
 
 ## Quickstart (Demo)
-Requirements: Docker, Node 18+ (Python 3.11+ only to run the service without Docker)
+Requirements: Docker, Node 22.12+ (Python 3.11+ only to run the service without Docker)
 
 ### 1) Start AI service + mock host
 ```bash

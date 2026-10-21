@@ -2,7 +2,6 @@ import os
 from pydantic import BaseModel
 
 class Settings(BaseModel):
-    log_level: str = "info"
     # Browser origins allowed to open WebSockets (comma-separated env override).
     # Native clients such as host adapters send no Origin header and are always allowed.
     allowed_origins: list[str] = [

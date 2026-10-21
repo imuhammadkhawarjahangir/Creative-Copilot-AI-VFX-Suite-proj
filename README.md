@@ -8,10 +8,11 @@ UI shows in real time:
 - Keyframe snapping to the next soundtrack beat
 - VFX presets from the scene notes
 
-**Status (v0.1).** The suggestion engine is a set of heuristics with fixed confidences; there is no ML model yet,
-and emotion, lighting, cuts and beats are supplied by the host rather than detected. The only working host is a
-mock that streams a synthetic timeline: the Resolve and Adobe adapters are not implemented, and suggested actions
-are not applied to a host yet. See [`docs/ROADMAP.md`](docs/ROADMAP.md).
+**Status (v0.1).** The suggestion engine is a set of heuristics whose confidences are adjusted by a small model
+learned from your Apply/Dismiss decisions; nothing analyses the media itself, and emotion, lighting, cuts and beats
+are supplied by the host rather than detected. Applied suggestions are sent to the host, which applies them; the
+only working host is a mock that streams a synthetic timeline, and the Adobe adapter is not implemented. See
+[`docs/ROADMAP.md`](docs/ROADMAP.md).
 
 ## Monorepo Layout
 - `service/` — FastAPI WebSocket suggestion service (Python)
@@ -40,6 +41,11 @@ mock host's playhead moves. Apply sends the suggestion to the host (the mock hos
 host's answer); Dismiss sends feedback to the service (visible in its logs). A decision is
 remembered for that suggestion: ids are derived from content, so a suggestion you applied or dismissed shows as
 decided whenever it reappears, for the rest of the session. The buttons are disabled while the UI is disconnected.
+
+SENSEI learns from these decisions: kinds of suggestion you apply gain confidence and kinds you dismiss lose it,
+which changes their ranking (the card's rationale says when your feedback moved a score). Feedback is stored in
+`~/.sensei/feedback.sqlite3` (the `sensei-data` volume under Docker). Delete it to start over, or set
+`SENSEI_FEEDBACK_DB=:memory:` to keep nothing between runs.
 
 `npm start` runs the built UI instead of the dev server, and `npm run dist` packages a standalone app into `release/`.
 If the service runs elsewhere, point the UI at it with `SENSEI_SERVICE_URL` (default `ws://127.0.0.1:8000`); the

@@ -12,6 +12,8 @@ class Settings(BaseModel):
     # "sensei.token.<its token>" (browsers can't set WebSocket headers; this also keeps it out of URLs)
     # and may only use the endpoints its roles allow.
     clients: list[Client] | None = None
+    # Where feedback is kept and learned from (":memory:" keeps it for this run only).
+    feedback_db: str
 
 def load_settings(env) -> Settings:
     clients_file = env.get("SENSEI_CLIENTS_FILE") or None
@@ -26,6 +28,8 @@ def load_settings(env) -> Settings:
     else:
         clients = None
     origins = env.get("SENSEI_ALLOWED_ORIGINS", DEFAULT_ALLOWED_ORIGINS)
-    return Settings(allowed_origins=[o.strip() for o in origins.split(",") if o.strip()], clients=clients)
+    feedback_db = env.get("SENSEI_FEEDBACK_DB") or os.path.join(os.path.expanduser("~"), ".sensei", "feedback.sqlite3")
+    return Settings(allowed_origins=[o.strip() for o in origins.split(",") if o.strip()], clients=clients,
+                    feedback_db=feedback_db)
 
 settings = load_settings(os.environ)

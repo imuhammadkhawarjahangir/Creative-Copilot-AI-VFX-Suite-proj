@@ -6,6 +6,7 @@ from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 from pydantic import ValidationError
 from .clients import authenticate
 from .config import settings
+from .feedback import FeedbackStore, arm_of
 from .protocol import (ActionOutcomeMsg, ActionResultMsg, ApplyActionMsg, ApplyMsg, ContextFrameMsg,
                        FeedbackMsg, HelloMsg, ProjectClosedMsg, checked_params)
 from .engine.suggest import build_suggestions
@@ -110,6 +111,12 @@ class Hub:
         self.actions = {a: owner for a, owner in self.actions.items() if owner[0] != project_id}
         self.send_all(ProjectClosedMsg(project_id=project_id).model_dump_json())
 
+    def find(self, project_id: str | None, suggestion_id: str) -> dict | None:
+        # A suggestion in the project's latest suggestions, or None if it isn't current.
+        if project_id not in self.latest:
+            return None
+        return next((i for i in json.loads(self.latest[project_id])["items"] if i["id"] == suggestion_id), None)
+
     def apply(self, project_id: str, suggestion_id: str) -> str | None:
         # Sends a current suggestion's action to the project's hosts. The UI only names the
         # suggestion: the action comes from what the service produced, re-checked against the
@@ -121,8 +128,7 @@ class Hub:
         hosts = self.hosts.get(project_id)
         if not hosts:
             return failed("no host is connected for this project")
-        items = json.loads(self.latest[project_id])["items"] if project_id in self.latest else []
-        item = next((i for i in items if i["id"] == suggestion_id), None)
+        item = self.find(project_id, suggestion_id)
         if item is None:
             return failed("this suggestion is no longer current")
         op = item["action"]["op"]
@@ -149,6 +155,15 @@ class Hub:
 
 
 hub = Hub()
+store = FeedbackStore(settings.feedback_db)
+
+
+def record_feedback(suggestion_id: str, verdict: str, project_id: str | None, client: str):
+    # Stored for learning when the suggestion is current (its content tells us its type).
+    item = hub.find(project_id, suggestion_id)
+    arm = arm_of(item["kind"], item["action"]["op"], item["action"]["params"]) if item else None
+    store.record(suggestion_id, verdict, arm, project_id, client or None)
+    log.info("feedback %r %s (project %r, client %r)", suggestion_id, verdict, project_id, client or None)
 
 
 async def close_quietly(ws: WebSocket):
@@ -226,8 +241,7 @@ async def serve(ws: WebSocket, reply, handlers=None, on_hello=None, active=lambd
                 await reply(json.dumps({"type": "ack", "ok": True}))
             elif msg_type == "feedback":
                 fb = FeedbackMsg.model_validate(data)
-                # accept feedback (store later)
-                log.info("feedback %r %s (project %r, client %r)", fb.suggestion_id, fb.verdict, fb.project_id, client or None)
+                record_feedback(fb.suggestion_id, fb.verdict, fb.project_id, client)
                 await reply(json.dumps({"type": "ack_feedback", "ok": True}))
             elif msg_type in handlers:
                 await handlers[msg_type](data)
@@ -269,7 +283,7 @@ async def ws_host(ws: WebSocket):
         if hello is None:
             await ws.send_text(error("send hello before context_frame"))
             return
-        msg = build_suggestions(ctx)
+        msg = build_suggestions(ctx, store.adjust)
         msg.project_id, msg.host = hello.project.id, hello.host.name
         suggestions = msg.model_dump_json()
         hub.publish(hello.project.id, suggestions)  # never waits on a UI
@@ -310,6 +324,7 @@ async def ws_ui(ws: WebSocket):
     async def on_apply(data: dict):
         request = ApplyMsg.model_validate(data)
         log.info("apply %r requested for project %r (client %r)", request.suggestion_id, request.project_id, client or None)
+        record_feedback(request.suggestion_id, "accepted", request.project_id, client)  # applying = accepting
         outcome = hub.apply(request.project_id, request.suggestion_id)
         if outcome is not None:
             await reply(outcome)

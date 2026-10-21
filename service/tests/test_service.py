@@ -7,6 +7,8 @@ from starlette.websockets import WebSocketDisconnect
 from sensei_service.clients import Client, digest, shared_client
 from sensei_service.config import settings
 from sensei_service.engine.suggest import build_suggestions
+from sensei_service import main
+from sensei_service.feedback import FeedbackStore
 from sensei_service.main import UI_QUEUE_SIZE, Hub, app, hub, serve
 from sensei_service.protocol import ContextFrameMsg
 
@@ -35,12 +37,16 @@ def start_host(host, project_id="p", name="test"):
 
 
 @pytest.fixture
-def client():
+def client(monkeypatch):
+    monkeypatch.setattr(main, "store", FeedbackStore(":memory:"))  # fresh learning state per test
     hub.clients.clear()
     hub.latest.clear()
     hub.hosts.clear()
     hub.actions.clear()
-    return TestClient(app)
+    # As a context manager, every WebSocket session shares one event loop, as under uvicorn;
+    # otherwise each session gets its own loop and cross-session wake-ups can be lost.
+    with TestClient(app) as test_client:
+        yield test_client
 
 
 def test_health(client):

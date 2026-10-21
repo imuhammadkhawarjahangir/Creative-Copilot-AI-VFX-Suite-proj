@@ -4,6 +4,8 @@ import pytest
 from fastapi.testclient import TestClient
 
 from sensei_service.engine.suggest import build_suggestions
+from sensei_service import main
+from sensei_service.feedback import FeedbackStore
 from sensei_service.main import app, hub
 from sensei_service.protocol import ContextFrameMsg, checked_params
 
@@ -22,12 +24,16 @@ def hello(project_id="p"):
 
 
 @pytest.fixture
-def client():
+def client(monkeypatch):
+    monkeypatch.setattr(main, "store", FeedbackStore(":memory:"))  # fresh learning state per test
     hub.clients.clear()
     hub.latest.clear()
     hub.hosts.clear()
     hub.actions.clear()
-    return TestClient(app)
+    # As a context manager, every WebSocket session shares one event loop, as under uvicorn;
+    # otherwise each session gets its own loop and cross-session wake-ups can be lost.
+    with TestClient(app) as test_client:
+        yield test_client
 
 
 def start(host, project_id="p"):

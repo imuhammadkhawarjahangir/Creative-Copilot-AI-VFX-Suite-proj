@@ -8,12 +8,13 @@
 - Feedback messages (validated and logged)
 - Apply accepted actions in the host (action ids, idempotent apply, bounded params, host-side guards)
 - Per-client tokens with roles
+- Feedback stored and learned from (per-suggestion-type preferences that re-rank suggestions)
 
 ## v0.2
 - Resolve adapter prototype (Python)
 - Adobe bridge proof-of-concept (CEP/UXP)
 - Audio beat detection utility module
-- Persistent projects + feedback logging
+- Persistent projects
 
 ## v0.3
 - Local model option (e.g., on-device LLM/VLM)

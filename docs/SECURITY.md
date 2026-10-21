@@ -26,6 +26,8 @@
   locked; CI actions are pinned to commit SHAs; the images run as non-root users.
 
 ## Known gaps
-- Feedback is logged, not stored; retention rules are needed once it is persisted.
+- Feedback is stored locally with no automatic expiry: suggestion ids, verdicts, project ids, client names and the
+  kind of suggestion (no media or timeline content). Delete `~/.sensei/feedback.sqlite3` (or the `sensei-data`
+  volume) to clear it, or set `SENSEI_FEEDBACK_DB=:memory:` to keep nothing.
 - Tokens identify clients (an app or adapter), not people: there is no per-user login, and revoking a client takes
   effect when the service restarts.

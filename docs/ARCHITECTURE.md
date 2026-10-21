@@ -4,10 +4,12 @@
 1. Host Adapter
    - Runs next to an NLE / motion-graphics host and streams its timeline context to the service: playhead, cuts,
      beat times and scene metadata (emotion, lighting, notes).
-   - Implemented: `adapters/mock-host`, which replays a synthetic timeline. Planned: Resolve and Adobe
-     (`adapters/resolve`, `adapters/adobe-bridge` are placeholders).
+   - Implemented: `adapters/mock-host`, which replays a synthetic timeline, and `adapters/resolve`, which reads
+     DaVinci Resolve's open timeline through its scripting API (clips and cuts from video track 1, beats from
+     markers, mood from clip keywords). Planned: Adobe (`adapters/adobe-bridge` is a placeholder).
    - Applies actions the service sends (`apply_action`), at most once per action id, and reports the result. The
-     mock host records them.
+     mock host records them; the Resolve adapter sets a CDL for a grade and leaves markers for what its API can't
+     do (transitions, keyframes, effects).
 
 2. SENSEI Service (FastAPI, `service/`)
    - `/ws/host`: a host registers its project with `hello`, then streams context frames; each frame is answered with

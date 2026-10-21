@@ -36,5 +36,7 @@
   volume) to clear it, or set `SENSEI_FEEDBACK_DB=:memory:` to keep nothing.
 - Tokens identify clients (an app or adapter), not people: there is no per-user login, and revoking a client takes
   effect when the service restarts.
+- The Resolve adapter, started from Resolve's menu, can only read its token from `~/.sensei/resolve.json`, in plain
+  text: give it a host-only client, so that file can't be used to read suggestions.
 - Every UI sees every open project, and all feedback trains one shared ranking: tokens limit a client to one vote
   per suggestion, not to its own projects or its own preferences.

@@ -10,15 +10,17 @@ UI shows in real time:
 
 **Status (v0.1).** The suggestion engine is a set of heuristics whose confidences are adjusted by a small model
 learned from your Apply/Dismiss decisions; nothing analyses the media itself, and emotion, lighting, cuts and beats
-are supplied by the host rather than detected. Applied suggestions are sent to the host, which applies them; the
-only working host is a mock that streams a synthetic timeline, and the Adobe adapter is not implemented. See
+are supplied by the host rather than detected. Applied suggestions are sent to the host, which applies them. Hosts:
+a mock that streams a synthetic timeline, and a DaVinci Resolve adapter (tested against a stand-in for Resolve's
+scripting API, not yet inside Resolve itself); the Adobe adapter is not implemented. See
 [`docs/ROADMAP.md`](docs/ROADMAP.md).
 
 ## Monorepo Layout
 - `service/` — FastAPI WebSocket suggestion service (Python)
 - `apps/copilot-desktop/` — Electron + React desktop UI
 - `adapters/mock-host/` — a fake editing host that streams a synthetic timeline
-- `adapters/resolve/`, `adapters/adobe-bridge/` — placeholders for real host integrations
+- `adapters/resolve/` — the DaVinci Resolve adapter ([setup](adapters/resolve/README.md))
+- `adapters/adobe-bridge/` — placeholder for an Adobe integration
 - `docs/` — [architecture](docs/ARCHITECTURE.md), [protocol](docs/PROTOCOL.md), [security](docs/SECURITY.md), [roadmap](docs/ROADMAP.md)
 
 ## Quickstart (Demo)
@@ -97,6 +99,9 @@ Browser pages may only connect from the origins in `SENSEI_ALLOWED_ORIGINS` (def
 cd service
 pip install --require-hashes -r requirements-test.lock
 pytest
+
+# Resolve adapter tests (fake Resolve, real service; same environment as the service tests)
+cd adapters/resolve && pytest
 
 # type-check the TypeScript packages
 cd apps/copilot-desktop && npm run typecheck

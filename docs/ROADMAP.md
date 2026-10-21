@@ -9,9 +9,10 @@
 - Apply accepted actions in the host (action ids, idempotent apply, bounded params, host-side guards)
 - Per-client tokens with roles
 - Feedback stored and learned from (per-suggestion-type preferences that re-rank suggestions)
+- Resolve adapter (Python), tested against a stand-in for Resolve's scripting API
 
 ## v0.2
-- Resolve adapter prototype (Python)
+- Resolve adapter verified inside Resolve
 - Adobe bridge proof-of-concept (CEP/UXP)
 - Audio beat detection utility module
 - Persistent projects

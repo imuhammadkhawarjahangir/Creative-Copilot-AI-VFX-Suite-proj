@@ -6,7 +6,7 @@ class Settings(BaseModel):
     # Native clients such as host adapters send no Origin header and are always allowed.
     allowed_origins: list[str] = [
         o.strip()
-        for o in os.environ.get("SENSEI_ALLOWED_ORIGINS", "http://127.0.0.1:5180,http://localhost:5180").split(",")
+        for o in os.environ.get("SENSEI_ALLOWED_ORIGINS", "http://127.0.0.1:5180,http://localhost:5180,sensei://app").split(",")
         if o.strip()
     ]
 

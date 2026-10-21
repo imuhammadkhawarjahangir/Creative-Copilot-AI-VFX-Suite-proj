@@ -5,8 +5,9 @@
   "main": "electron/main.js",
   "type": "module",
   "scripts": {
-    "dev": "concurrently -k \"vite --host 127.0.0.1 --port 5180 --strictPort\" \"electron .\"",
-    "build": "vite build"
+    "dev": "concurrently -k \"vite --host 127.0.0.1 --port 5180 --strictPort\" \"electron . --dev\"",
+    "build": "vite build",
+    "start": "vite build && electron ."
   },
   "dependencies": {
     "react": "^18.3.1",

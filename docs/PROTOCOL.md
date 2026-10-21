@@ -9,7 +9,7 @@ Transport: WebSocket JSON
 Suggestions are scoped per project: each `suggestions` message carries the `project_id` and `host` name from that host's `hello`, so a UI can keep one stream per project.
 - `GET /health` — `{"ok": true}`
 
-WebSocket handshakes that carry a browser `Origin` not listed in `SENSEI_ALLOWED_ORIGINS` (comma-separated, default `http://127.0.0.1:5180,http://localhost:5180`) are rejected with HTTP 403. Native clients such as host adapters send no `Origin` and are accepted.
+WebSocket handshakes that carry a browser `Origin` not listed in `SENSEI_ALLOWED_ORIGINS` (comma-separated, default `http://127.0.0.1:5180,http://localhost:5180,sensei://app`: the desktop UI's dev server and its packaged origin) are rejected with HTTP 403. Native clients such as host adapters send no `Origin` and are accepted.
 
 ## Host -> Service
 

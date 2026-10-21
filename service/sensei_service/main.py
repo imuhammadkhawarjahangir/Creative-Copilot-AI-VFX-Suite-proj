@@ -83,8 +83,11 @@ hub = Hub()
 
 
 async def close_quietly(ws: WebSocket):
+    # No timeout: the close frame has to wait until the socket drains. A slow client that resumes
+    # reading then gets it (1013: try again later) and reconnects with a fresh snapshot; a client
+    # that never reads again is cut off by uvicorn's keepalive ping. The hub has dropped it already.
     try:
-        await asyncio.wait_for(ws.close(code=1013), timeout=1)  # 1013: try again later
+        await ws.close(code=1013)
     except Exception:
         pass
 

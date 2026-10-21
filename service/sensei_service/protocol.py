@@ -150,7 +150,7 @@ class ActionResultMsg(BaseModel):  # host -> service
     type: Literal["action_result"]
     action_id: ActionId
     status: Literal["applied", "marked", "duplicate", "rejected"]
-    detail: Optional[Annotated[str, StringConstraints(max_length=200)]] = None
+    detail: Optional[Annotated[str, StringConstraints(pattern=r"^[^\x00-\x1f\x7f]{0,200}$")]] = None  # shown on every UI
 
 class ActionOutcomeMsg(BaseModel):  # service -> UI; "failed" means the service never reached a host
     type: Literal["action_result"] = "action_result"

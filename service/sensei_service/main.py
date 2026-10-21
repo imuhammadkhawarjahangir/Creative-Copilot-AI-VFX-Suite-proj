@@ -282,7 +282,8 @@ async def serve(ws: WebSocket, reply, handlers=None, on_hello=None, active=lambd
             if msg_type == "hello":
                 hello = HelloMsg.model_validate(data)
                 problem = on_hello(hello) if on_hello is not None else None
-                await reply(error(problem) if problem else json.dumps({"type": "ack", "ok": True}))
+                # a refusal is an ack too, so a host can tell it from a late error about an earlier message
+                await reply(json.dumps({"type": "ack", "ok": False, "detail": problem} if problem else {"type": "ack", "ok": True}))
             elif msg_type in handlers:
                 await handlers[msg_type](data)
             elif msg_type in ONLY_ON:

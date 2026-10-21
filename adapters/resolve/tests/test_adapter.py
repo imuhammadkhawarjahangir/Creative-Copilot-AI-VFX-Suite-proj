@@ -184,6 +184,51 @@ def test_actions_need_an_open_timeline():
                                               "status": "rejected", "detail": "no timeline is open"}
 
 
+def test_details_never_carry_control_characters():
+    timeline = scene_timeline()
+    timeline.items[1].name = "Night\x07shot"
+    result = apply(reader_for(timeline), grade(timeline))  # apply() validates it as the service would
+    assert result["status"] == "applied" and "Night shot" in result["detail"]
+
+
+class FakeSocket:
+    # The service's side of one connection: each hello gets the next of `answers`, behind any
+    # `earlier` messages still on their way.
+    def __init__(self, answers, earlier=()):
+        self.answers, self.inbox, self.sent = list(answers), list(earlier), []
+
+    def send(self, message):
+        self.sent.append(json.loads(message))
+        if self.sent[-1]["type"] == "hello":
+            self.inbox.append(self.answers.pop(0))
+
+    def recv(self, timeout=None):
+        if not self.inbox:
+            raise TimeoutError()
+        return json.dumps(self.inbox.pop(0))
+
+
+def run_session(ws):
+    # until the first context frame is sent; returns the types of the messages sent
+    resolve_adapter.session(ws, reader_for(scene_timeline()), set(),
+                            should_stop=lambda: any(m["type"] == "context_frame" for m in ws.sent))
+    return [m["type"] for m in ws.sent]
+
+
+def test_only_an_ack_answers_hello():
+    # an error about an earlier message, read after hello was sent, isn't hello's answer
+    ws = FakeSocket([{"type": "ack", "ok": True}],
+                    earlier=[{"type": "error", "message": "no result is expected from this host for that action_id"}])
+    assert run_session(ws) == ["hello", "context_frame"]
+
+
+def test_a_refused_hello_is_asked_again_later(monkeypatch, capsys):
+    monkeypatch.setattr(resolve_adapter, "HELLO_RETRY_SECONDS", 0.2)
+    refused = {"type": "ack", "ok": False, "detail": "project 'p' is held by another client"}
+    assert run_session(FakeSocket([refused, {"type": "ack", "ok": True}])) == ["hello", "hello", "context_frame"]
+    assert "is held by another client" in capsys.readouterr().out
+
+
 def test_settings_come_from_the_environment_then_the_file(tmp_path):
     path = tmp_path / "resolve.json"
     assert resolve_adapter.settings({"SENSEI_RESOLVE_CONFIG": str(path)}) == \

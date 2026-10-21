@@ -131,6 +131,14 @@ def test_a_host_cannot_report_for_another_project(client):
         assert "no result is expected" in b.receive_json()["message"]
 
 
+def test_result_details_cannot_carry_control_characters(client):
+    # a detail is shown on every UI and logged
+    with client.websocket_connect("/ws/host") as host:
+        host.send_json({"type": "action_result", "action_id": "act_0123456789ab", "status": "rejected",
+                        "detail": "no clip\nINFO: forged log line"})
+        assert host.receive_json()["message"].startswith("invalid action_result: detail")
+
+
 def test_a_host_answers_each_send_once(client):
     # so a stray or repeated result can't overwrite what UIs show, while applying again still gets an answer
     with client.websocket_connect("/ws/ui") as ui, client.websocket_connect("/ws/host") as host:
@@ -229,7 +237,7 @@ def test_another_client_cannot_take_over_a_project(client, host_clients):
         suggestions = start(owner)
         ui.receive_json()
         intruder.send_json(hello("p"))
-        assert "held by another client" in intruder.receive_json()["message"]
+        assert intruder.receive_json() == {"type": "ack", "ok": False, "detail": "project 'p' is held by another client"}
 
         ui.send_json({"type": "apply", "project_id": "p", "suggestion_id": item_of(suggestions, "vfx")["id"]})
         action = owner.receive_json()
@@ -250,7 +258,7 @@ def test_a_host_refused_another_project_no_longer_hosts_its_old_one(client, host
         ui.receive_json()
 
         switcher.send_json(hello("p"))
-        assert "held by another client" in switcher.receive_json()["message"]
+        assert switcher.receive_json()["ok"] is False
         assert ui.receive_json() == {"type": "project_closed", "project_id": "q"}
         assert "q" not in hub.hosts and "q" not in hub.owners
 

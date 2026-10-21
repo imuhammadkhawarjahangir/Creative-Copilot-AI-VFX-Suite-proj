@@ -276,8 +276,9 @@ def apply_action(reader: Reader, action: dict, applied: set) -> dict:
     action_id = action["action_id"]
 
     def result(status: str, detail: Optional[str] = None) -> dict:
+        # the service refuses a detail over 200 characters or with control characters
         return {"type": "action_result", "action_id": action_id, "status": status,
-                "detail": None if detail is None else detail[:200]}
+                "detail": None if detail is None else re.sub(r"[\x00-\x1f\x7f]+", " ", detail)[:200]}
 
     opened = reader.open_timeline()
     if opened is None:
@@ -339,11 +340,13 @@ def session(ws, reader: Reader, applied: set, should_stop: Callable[[], bool]):
             hello, frame = state
             if hello != announced and time.monotonic() >= retry_at:
                 ws.send(json.dumps(hello))
-                reply = pump(5.0, until={"ack", "error"})
-                if reply["type"] == "ack":
+                # only an ack answers hello: an error meanwhile is about an earlier message
+                reply = pump(5.0, until={"ack"})
+                if reply.get("ok"):
                     announced, last_frame = hello, None
                     log(f"streaming timeline {hello['project']['id']}")
                 else:  # e.g. another client's host holds this project
+                    log(f"the service refused timeline {hello['project']['id']}: {reply.get('detail')}")
                     announced, retry_at = None, time.monotonic() + HELLO_RETRY_SECONDS
             if hello == announced and frame is not None and frame != last_frame:
                 ws.send(json.dumps({**frame, "ts": int(time.time())}))

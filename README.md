@@ -13,8 +13,31 @@ automation, and intelligent enhancements:
 - `adapters/` — Host integrations (mock host included)
 
 ## Quickstart (Demo)
-Requirements: Node 18+, Python 3.11+
+Requirements: Docker, Node 18+ (Python 3.11+ only to run the service without Docker)
 
 ### 1) Start AI service + mock host
 ```bash
-docker-compose up --build
+docker compose up --build
+```
+The service listens on `localhost:8000`; the mock host streams a synthetic timeline into it.
+
+### 2) Start the desktop UI
+```bash
+cd apps/copilot-desktop
+npm install
+npm run dev
+```
+Suggestions stream into the window as the mock host's playhead moves. Apply / Dismiss send feedback to the service (visible in its logs).
+
+### Without Docker
+```bash
+# service
+cd service
+pip install -e .
+uvicorn sensei_service.main:app --port 8000
+
+# mock host (second terminal)
+cd adapters/mock-host
+npm install
+npm start
+```

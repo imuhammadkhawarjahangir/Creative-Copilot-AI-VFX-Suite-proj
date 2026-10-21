@@ -2,6 +2,11 @@
 
 Transport: WebSocket JSON
 
+## Endpoints
+- `/ws/host` — editing hosts. Send `hello`, `context_frame`, `feedback`. Each `context_frame` is answered with `suggestions` on the same socket.
+- `/ws/ui` — copilot UIs. Send `hello`, `feedback`. Receive the latest `suggestions` on connect, then every `suggestions` message produced from any host's frames.
+- `GET /health` — `{"ok": true}`
+
 ## Host -> Service
 
 ### hello
@@ -52,9 +57,24 @@ Transport: WebSocket JSON
   ]
 }
 
+An item's `id` is derived from its content, so an unchanged suggestion keeps its id across frames.
+
 ## UI/Host -> Service (feedback)
 {
   "type": "feedback",
   "suggestion_id": "sug_001",
   "verdict": "accepted"
 }
+
+`verdict` is one of `accepted`, `rejected`, `modified`; optional `notes` string.
+
+## Service replies
+### ack (to hello)
+{ "type": "ack", "ok": true }
+
+### ack_feedback (to feedback)
+{ "type": "ack_feedback", "ok": true }
+
+### error
+Sent for invalid JSON, a failed validation, or an unknown `type`. The connection stays open.
+{ "type": "error", "message": "invalid context_frame: scene: Field required" }

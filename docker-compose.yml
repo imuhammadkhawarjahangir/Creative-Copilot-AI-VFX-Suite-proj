@@ -1,0 +1,12 @@
+services:
+  service:
+    build: ./service
+    ports:
+      - "8000:8000"
+
+  mock-host:
+    build: ./adapters/mock-host
+    environment:
+      SENSEI_WS_URL: ws://service:8000/ws/host
+    depends_on:
+      - service

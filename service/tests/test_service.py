@@ -136,7 +136,7 @@ def test_bad_input_gets_error_and_socket_stays_open(client, payload, expected):
 
 def test_feedback_is_validated(client):
     with client.websocket_connect("/ws/ui") as ui:
-        ui.send_json({"type": "feedback", "suggestion_id": "sug_1", "verdict": "accepted"})
+        ui.send_json({"type": "feedback", "suggestion_id": "sug_1234abcd", "verdict": "accepted"})
         assert ui.receive_json() == {"type": "ack_feedback", "ok": True}
 
         ui.send_json({"type": "feedback", "verdict": "loved it"})
@@ -266,3 +266,16 @@ def test_closing_an_unknown_project_is_harmless():
     hub = Hub()
     hub.close("never-opened")
     assert hub.hosts == {}
+
+
+@pytest.mark.parametrize("message", [
+    {"type": "feedback", "suggestion_id": "sug_1234abcd\nINFO: forged log line", "verdict": "accepted"},
+    {"type": "feedback", "suggestion_id": "sug_1234abcd", "verdict": "accepted", "project_id": "p\n1"},
+    {"type": "feedback", "suggestion_id": "sug_1234abcd", "verdict": "accepted", "notes": "x" * 1001},
+    {**HELLO, "project": {"id": "a" * 65, "fps": 24}},
+    {**HELLO, "host": {"name": "evil\r\nhost", "version": "0"}},
+])
+def test_client_strings_are_bounded(client, message):
+    with client.websocket_connect("/ws/host") as host:
+        host.send_json(message)
+        assert host.receive_json()["type"] == "error"

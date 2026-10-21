@@ -56,8 +56,15 @@ function connect() {
 
   ws.on("message", (buf) => {
     const text = buf.toString();
-    const msg = JSON.parse(text);
-    if (msg.type === "apply_action") {
+    let msg;
+    try {
+      msg = JSON.parse(text);
+    } catch {
+      // never sent by the service; not worth stopping the host over
+      console.error("[mock-host] ignored a message that isn't JSON:", text.slice(0, 80));
+      return;
+    }
+    if (msg?.type === "apply_action") {
       ws.send(JSON.stringify(applyAction(msg as ApplyAction)));
       return;
     }

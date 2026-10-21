@@ -133,6 +133,14 @@ class FakeTimeline:
                 return {frame: dict(info)}
         return {}
 
+    def DeleteMarkerByCustomData(self, customData):
+        # deletes the first marker with that customData
+        for frame, info in self.markers.items():
+            if info["customData"] == customData:
+                del self.markers[frame]
+                return True
+        return False
+
 
 class FakeProject:
     def __init__(self, name, timeline=None):

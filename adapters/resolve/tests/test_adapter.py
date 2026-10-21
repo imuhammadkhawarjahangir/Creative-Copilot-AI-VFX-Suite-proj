@@ -158,7 +158,9 @@ def test_a_grade_goes_to_the_clip_it_was_suggested_for():
     (lambda t, a: a.update(op="delete_timeline"), "unsupported op delete_timeline"),
     (lambda t, a: a["params"].update(shadow_tint="purple"), "invalid params"),
     (lambda t, a: a["params"].pop("lut"), "invalid params"),
-    (lambda t, a: setattr(t.items[1], "nodes", 0), "Resolve refused the grade"),
+    (lambda t, a: setattr(t.items[1], "nodes", 0), "Resolve refused the grade"),  # its marker is taken back
+    # no grade without the marker that recognises it as a duplicate after a restart
+    (lambda t, a: [t.AddMarker(frame, "Green", "", "", 1) for frame in range(240, 246)], "no free frame for a marker"),
 ])
 def test_actions_that_cant_be_carried_out_are_rejected_untouched(change, detail):
     timeline = scene_timeline()
@@ -205,7 +207,8 @@ class FakeSocket:
     def recv(self, timeout=None):
         if not self.inbox:
             raise TimeoutError()
-        return json.dumps(self.inbox.pop(0))
+        message = self.inbox.pop(0)
+        return message if isinstance(message, str) else json.dumps(message)
 
 
 def run_session(ws):
@@ -219,6 +222,11 @@ def test_only_an_ack_answers_hello():
     # an error about an earlier message, read after hello was sent, isn't hello's answer
     ws = FakeSocket([{"type": "ack", "ok": True}],
                     earlier=[{"type": "error", "message": "no result is expected from this host for that action_id"}])
+    assert run_session(ws) == ["hello", "context_frame"]
+
+
+def test_messages_that_arent_json_objects_are_ignored():
+    ws = FakeSocket([{"type": "ack", "ok": True}], earlier=["<html>502 Bad Gateway</html>", "[1, 2]"])
     assert run_session(ws) == ["hello", "context_frame"]
 
 

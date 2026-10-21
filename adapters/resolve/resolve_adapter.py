@@ -225,10 +225,13 @@ def apply_color_grade(timeline, fps, params, tag):
     item = suggested_clip(timeline, params["shot"])
     if item is None:
         return "rejected", "the clip it was suggested for is no longer on the timeline"
+    # The marker first: it is what recognises a repeat after a restart, so there is no grade without one.
+    if leave_marker(timeline, item.GetStart() - timeline.GetStartFrame(), "SENSEI grade",
+                    f"Approximates the {look} look with a CDL on node 1", tag) is None:
+        return "rejected", "no free frame for a marker there"
     if not item.SetCDL(cdl):
+        timeline.DeleteMarkerByCustomData(tag)
         return "rejected", "Resolve refused the grade"
-    leave_marker(timeline, item.GetStart() - timeline.GetStartFrame(), "SENSEI grade",
-                 f"Approximates the {look} look with a CDL on node 1", tag)
     return "applied", f"CDL on node 1 of {text(item.GetName(), 64)} (approximates {look})"
 
 
@@ -310,7 +313,13 @@ def session(ws, reader: Reader, applied: set, should_stop: Callable[[], bool]):
     # One connection: announce the open timeline, stream its context when it changes, carry out
     # actions as they arrive. Returns when asked to stop; connection errors propagate.
     def on_message(raw) -> dict:
-        message = json.loads(raw)
+        try:
+            message = json.loads(raw)
+        except ValueError:
+            message = None
+        if not isinstance(message, dict):  # never sent by the service; not worth dropping the connection over
+            log(f"ignored a message that isn't a JSON object: {text(raw, 80)}")
+            return {}
         if message.get("type") == "apply_action":
             ws.send(json.dumps(apply_action(reader, message, applied)))
         elif message.get("type") == "error":

@@ -27,11 +27,6 @@ export default function App() {
         setConnected(true);
         // the service replays the latest suggestions of every open project right after connect
         setProjects({});
-        ws.send(JSON.stringify({
-          type: "hello",
-          host: { name: "copilot-ui", version: "0.1" },
-          project: { id: "ui-session", fps: 24 }
-        }));
       };
 
       ws.onmessage = (evt) => {
@@ -68,11 +63,11 @@ export default function App() {
   }, []);
 
   const sendFeedback = (projectId: string, suggestionId: string, verdict: Verdict) => {
-    setVerdicts((prev) => ({ ...prev, [`${projectId}/${suggestionId}`]: verdict }));
     const ws = wsRef.current;
-    if (ws?.readyState === WebSocket.OPEN) {
-      ws.send(JSON.stringify({ type: "feedback", suggestion_id: suggestionId, verdict, project_id: projectId }));
-    }
+    // Only show a verdict the service actually received; the buttons are disabled while disconnected.
+    if (ws?.readyState !== WebSocket.OPEN) return;
+    ws.send(JSON.stringify({ type: "feedback", suggestion_id: suggestionId, verdict, project_id: projectId }));
+    setVerdicts((prev) => ({ ...prev, [`${projectId}/${suggestionId}`]: verdict }));
   };
 
   const projectIds = Object.keys(projects).sort();
@@ -101,6 +96,7 @@ export default function App() {
                 key={s.id}
                 s={s}
                 status={verdicts[`${projectId}/${s.id}`] ?? "idle"}
+                disabled={!connected}
                 onFeedback={(verdict) => sendFeedback(projectId, s.id, verdict)}
               />
             ))}

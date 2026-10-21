@@ -4,10 +4,11 @@ import type { Suggestion, Verdict } from "../types";
 type Props = {
   s: Suggestion;
   status: "idle" | Verdict;
+  disabled: boolean;
   onFeedback: (verdict: Verdict) => void;
 };
 
-export default function SuggestionCard({ s, status, onFeedback }: Props) {
+export default function SuggestionCard({ s, status, disabled, onFeedback }: Props) {
   return (
     <div style={{
       border: "1px solid rgba(0,0,0,0.12)",
@@ -26,10 +27,10 @@ export default function SuggestionCard({ s, status, onFeedback }: Props) {
       </div>
 
       <div style={{ display: "flex", gap: 8, marginTop: 12 }}>
-        <button disabled={status !== "idle"} onClick={() => onFeedback("accepted")}>
+        <button disabled={disabled || status !== "idle"} onClick={() => onFeedback("accepted")}>
           Apply
         </button>
-        <button disabled={status !== "idle"} onClick={() => onFeedback("rejected")}>
+        <button disabled={disabled || status !== "idle"} onClick={() => onFeedback("rejected")}>
           Dismiss
         </button>
         {status !== "idle" && <span style={{ opacity: 0.7 }}>✓ {status}</span>}

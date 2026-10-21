@@ -6,7 +6,7 @@ from starlette.websockets import WebSocketDisconnect
 
 from sensei_service.config import Settings, settings
 from sensei_service.engine.suggest import build_suggestions
-from sensei_service.main import UI_QUEUE_SIZE, Hub, app, hub
+from sensei_service.main import UI_QUEUE_SIZE, Hub, app, hub, serve
 from sensei_service.protocol import ContextFrameMsg
 
 HELLO = {"type": "hello", "host": {"name": "test", "version": "0"}, "project": {"id": "p", "fps": 24}}
@@ -199,17 +199,22 @@ def test_token_must_be_subprotocol_safe():
 
 
 class FakeWs:
-    def __init__(self, stall=False):
+    def __init__(self, stall=False, fail=False):
         self.stall = stall
+        self.fail = fail
         self.sent = []
         self.closed = False
+        self.close_calls = 0
 
     async def send_text(self, message):
+        if self.fail:
+            raise ConnectionResetError("peer reset the connection")
         if self.stall:
             await asyncio.Event().wait()  # a client that stopped reading: the send never completes
         self.sent.append(message)
 
     async def close(self, code=1000):
+        self.close_calls += 1
         self.closed = True
 
 
@@ -226,7 +231,7 @@ def test_a_stalled_ui_is_dropped_without_blocking_others():
         stalled, healthy = FakeWs(stall=True), FakeWs()
         uis = [hub.subscribe(stalled), hub.subscribe(healthy)]
         for ui in uis:
-            ui.sender = asyncio.create_task(ui.pump())
+            hub.start(ui)
         messages = [f"m{i}" for i in range(UI_QUEUE_SIZE + 10)]
         for message in messages:
             hub.publish("p", message)  # synchronous: never waits on a UI
@@ -235,6 +240,44 @@ def test_a_stalled_ui_is_dropped_without_blocking_others():
         assert uis[0] not in hub.clients and stalled.closed
         assert uis[1] in hub.clients and healthy.sent == messages
         hub.unsubscribe(uis[1])
+
+    asyncio.run(scenario())
+
+
+def test_a_dropped_ui_is_dropped_once(caplog):
+    # its own replies (acks, errors) keep going through hub.send until the socket closes
+    async def scenario():
+        hub = Hub()
+        stalled = FakeWs(stall=True)
+        ui = hub.subscribe(stalled)
+        hub.start(ui)
+        for i in range(UI_QUEUE_SIZE + 2):
+            hub.publish("p", f"m{i}")
+            await asyncio.sleep(0)
+        for _ in range(20):
+            hub.send(ui, "ack")
+        assert len(hub.background) == 1  # the close task is referenced while it runs
+        await asyncio.sleep(0.05)
+        assert hub.background == set()
+        assert stalled.close_calls == 1
+
+    with caplog.at_level("WARNING", logger="uvicorn.error"):
+        asyncio.run(scenario())
+    assert sum("stopped reading" in r.getMessage() for r in caplog.records) == 1
+
+
+def test_a_failed_send_ends_the_sender_cleanly():
+    async def scenario():
+        hub = Hub()
+        ui = hub.subscribe(FakeWs(fail=True))
+        hub.start(ui)
+        hub.publish("p", "m0")
+        await asyncio.sleep(0.01)
+        assert ui.sender.done() and not ui.sender.cancelled()
+        assert ui.sender.exception() is None  # nothing left for asyncio to report as unretrieved
+        assert ui not in hub.clients and ui.dropped
+        hub.publish("p", "m1")
+        assert ui.queue.empty()  # nothing more is queued for a dead UI
 
     asyncio.run(scenario())
 
@@ -279,3 +322,23 @@ def test_client_strings_are_bounded(client, message):
     with client.websocket_connect("/ws/host") as host:
         host.send_json(message)
         assert host.receive_json()["type"] == "error"
+
+
+def test_serve_stops_once_the_client_is_dropped():
+    # after a drop Starlette refuses receive_text(), so serve() must not read again
+    class Inbox:
+        def __init__(self, messages):
+            self.messages = list(messages)
+
+        async def receive_text(self):
+            return self.messages.pop(0)
+
+    replies, state = [], {"active": True}
+
+    async def reply(message):
+        replies.append(message)
+        state["active"] = False  # e.g. the UI is dropped while its message is handled
+
+    inbox = Inbox(['{"type": "nope"}'] * 3)
+    asyncio.run(serve(inbox, reply, active=lambda: state["active"]))
+    assert len(replies) == 1 and len(inbox.messages) == 2

@@ -22,10 +22,7 @@ class UiClient:
         self.ws = ws
         self.queue: asyncio.Queue[str] = asyncio.Queue(maxsize=UI_QUEUE_SIZE + backlog)
         self.sender: asyncio.Task | None = None
-
-    async def pump(self):
-        while True:
-            await self.ws.send_text(await self.queue.get())
+        self.dropped = False  # set once; nothing is queued for this UI after that
 
 
 class Hub:
@@ -35,6 +32,7 @@ class Hub:
         self.clients: set[UiClient] = set()
         self.latest: dict[str, str] = {}  # project id -> last suggestions message
         self.hosts: dict[str, int] = {}   # project id -> connected host count
+        self.background: set[asyncio.Task] = set()  # close tasks, kept referenced until they finish
 
     def subscribe(self, ws: WebSocket) -> UiClient:
         # The snapshot is queued in the same step as registration, so no publish or close can
@@ -45,16 +43,35 @@ class Hub:
         self.clients.add(ui)
         return ui
 
+    def start(self, ui: UiClient):
+        ui.sender = asyncio.get_running_loop().create_task(self.pump(ui))
+
+    async def pump(self, ui: UiClient):
+        try:
+            while True:
+                await ui.ws.send_text(await ui.queue.get())
+        except Exception as exc:  # cancellation is a BaseException and still propagates
+            # The socket failed under us: stop delivering. The connection's handler sees the
+            # disconnect and finishes cleanup; the task ends normally, with nothing left unretrieved.
+            log.info("stopped sending to a UI whose connection failed: %r", exc)
+            ui.dropped = True
+            self.clients.discard(ui)
+
     def unsubscribe(self, ui: UiClient):
+        ui.dropped = True
         self.clients.discard(ui)
         if ui.sender is not None:
             ui.sender.cancel()
 
     def send(self, ui: UiClient, message: str):
+        if ui.dropped:
+            return
         if ui.queue.full():
             log.warning("disconnecting a UI that stopped reading (%d messages behind)", ui.queue.qsize())
             self.unsubscribe(ui)
-            asyncio.get_running_loop().create_task(close_quietly(ui.ws))
+            closing = asyncio.get_running_loop().create_task(close_quietly(ui.ws))
+            self.background.add(closing)
+            closing.add_done_callback(self.background.discard)
             return
         ui.queue.put_nowait(message)
 
@@ -125,10 +142,12 @@ def describe(err: ValidationError) -> str:
     return "; ".join(f"{'.'.join(map(str, e['loc']))}: {e['msg']}" for e in err.errors())
 
 
-async def serve(ws: WebSocket, reply, on_hello=None, on_frame=None):
-    # Bad input gets an error reply; the socket stays open.
-    while True:
+async def serve(ws: WebSocket, reply, on_hello=None, on_frame=None, active=lambda: True):
+    # Bad input gets an error reply; the socket stays open. Stops as soon as active() turns false.
+    while active():
         raw = await ws.receive_text()
+        if not active():
+            return  # dropped while waiting: the message is ignored
         try:
             data = json.loads(raw)
         except json.JSONDecodeError:
@@ -216,8 +235,13 @@ async def ws_ui(ws: WebSocket):
 
     try:
         await ws.accept(subprotocol=subprotocol or None)
-        ui.sender = asyncio.create_task(ui.pump())
-        await serve(ws, reply)
+        hub.start(ui)
+        await serve(ws, reply, active=lambda: not ui.dropped)
+        # Dropped (fell behind, or its socket failed). Our close may still be waiting for the socket
+        # to drain, and Starlette refuses receive_text() once a close has begun, so read raw messages
+        # (ignored) until the connection ends; uvicorn's keepalive still cuts a client that never reads.
+        while (await ws.receive())["type"] != "websocket.disconnect":
+            pass
     except WebSocketDisconnect:
         return
     finally:

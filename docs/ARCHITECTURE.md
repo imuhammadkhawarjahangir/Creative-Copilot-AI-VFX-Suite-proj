@@ -20,7 +20,7 @@
    - `/ws/ui`: UIs receive the latest suggestions of every open project, then every update, scoped per project.
    - Applying: routes a suggestion a UI applied to the project's hosts (bounded, idempotent `apply_action`) and the
      hosts' results back to every UI.
-   - Feedback (Apply counts as accepted, Dismiss as rejected; one vote per client, project and suggestion) is stored
+   - Feedback (Apply counts as accepted once a host confirms it, Dismiss as rejected; one vote per client, project and suggestion) is stored
      locally in SQLite and learned from (`feedback.py`): each suggestion type has a Beta-Bernoulli preference whose prior mean is the rule's confidence,
      worth 5 decisions; the posterior mean replaces the confidence before ranking.
    - (Future) Pluggable model backends: local LLM/VLM, remote APIs, hybrid
@@ -28,7 +28,7 @@
 3. Copilot Desktop (Electron + React, `apps/copilot-desktop/`)
    - Shows one live suggestion stream per project
    - Apply sends the suggestion to the host through the service and shows the host's answer; Dismiss sends feedback.
-     A decision the service didn't act on (the suggestion changed meanwhile) is undone, and the card says why
+     A decision that didn't take effect (the suggestion changed meanwhile, or the host refused it) is undone, and the card says why
    - Sandboxed renderer; the packaged UI is served over a privileged `sensei://` scheme
 
 ## Data flow

@@ -128,7 +128,30 @@ def test_a_host_cannot_report_for_another_project(client):
         action = a.receive_json()
 
         b.send_json({"type": "action_result", "action_id": action["action_id"], "status": "applied"})
-        assert "unknown action_id" in b.receive_json()["message"]
+        assert "no result is expected" in b.receive_json()["message"]
+
+
+def test_a_host_answers_each_send_once(client):
+    # so a stray or repeated result can't overwrite what UIs show, while applying again still gets an answer
+    with client.websocket_connect("/ws/ui") as ui, client.websocket_connect("/ws/host") as host:
+        suggestions = start(host)
+        ui.receive_json()
+        apply = {"type": "apply", "project_id": "p", "suggestion_id": item_of(suggestions, "vfx")["id"]}
+        ui.send_json(apply)
+        action = host.receive_json()
+
+        def report(status):
+            host.send_json({"type": "action_result", "action_id": action["action_id"], "status": status})
+
+        report("applied")
+        assert ui.receive_json()["status"] == "applied"
+        report("duplicate")
+        assert "no result is expected" in host.receive_json()["message"]
+
+        ui.send_json(apply)  # sent again: one more answer is owed
+        host.receive_json()
+        report("duplicate")
+        assert ui.receive_json()["status"] == "duplicate"
 
 
 def test_closing_a_project_forgets_its_actions(client):
@@ -213,7 +236,7 @@ def test_another_client_cannot_take_over_a_project(client, host_clients):
         assert action["type"] == "apply_action"
         # the intruder received no action (its next message is the error below) and can't report on it
         intruder.send_json({"type": "action_result", "action_id": action["action_id"], "status": "applied"})
-        assert "send hello" in intruder.receive_json()["message"]
+        assert "no result is expected" in intruder.receive_json()["message"]
 
 
 def test_a_host_refused_another_project_no_longer_hosts_its_old_one(client, host_clients):
@@ -254,4 +277,4 @@ def test_only_the_hosts_an_action_was_sent_to_may_report_it(client):
             late.send_json(hello("p"))
             assert late.receive_json() == ACK
             late.send_json({"type": "action_result", "action_id": action["action_id"], "status": "applied"})
-            assert "unknown action_id" in late.receive_json()["message"]
+            assert "no result is expected" in late.receive_json()["message"]

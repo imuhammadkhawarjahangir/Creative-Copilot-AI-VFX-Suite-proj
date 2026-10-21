@@ -150,10 +150,16 @@ def test_feedback_on_a_suggestion_that_isnt_current_is_not_stored(client):
     assert main.store.db.execute("SELECT COUNT(*) FROM votes").fetchone() == (0,)
 
 
-def test_an_apply_counts_once_and_only_when_sent(client, monkeypatch):
+def test_an_apply_counts_once_and_only_when_a_host_confirms_it(client, monkeypatch):
     with client.websocket_connect("/ws/ui") as ui, client.websocket_connect("/ws/host") as host:
         vfx = open_project(host, ui)
         apply = {"type": "apply", "project_id": "p", "suggestion_id": vfx["id"]}
+
+        def answer(status):
+            ui.send_json(apply)
+            action = host.receive_json()
+            host.send_json({"type": "action_result", "action_id": action["action_id"], "status": status})
+            assert ui.receive_json()["status"] == status
 
         def out_of_bounds(op, params):
             raise ValueError(op)
@@ -162,9 +168,17 @@ def test_an_apply_counts_once_and_only_when_sent(client, monkeypatch):
             patch.setattr(main, "checked_params", out_of_bounds)
             ui.send_json(apply)
             assert ui.receive_json()["status"] == "failed"
-        assert main.store.counts == {}  # nothing was sent, so nothing is learned
+        assert main.store.counts == {}  # never sent
 
-        for _ in range(2):
-            ui.send_json(apply)
-            assert host.receive_json()["type"] == "apply_action"
-    assert main.store.counts == {VFX_ARM: (1, 0)}
+        answer("rejected")
+        assert main.store.counts == {}  # sent, but the host didn't carry it out
+
+        ui.send_json(apply)
+        action = host.receive_json()
+        assert main.store.counts == {}  # sent, and not answered yet
+        host.send_json({"type": "action_result", "action_id": action["action_id"], "status": "applied"})
+        assert ui.receive_json()["status"] == "applied"
+        assert main.store.counts == {VFX_ARM: (1, 0)}
+
+        answer("duplicate")
+    assert main.store.counts == {VFX_ARM: (1, 0)}  # confirmed twice, counted once

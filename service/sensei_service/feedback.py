@@ -2,8 +2,8 @@
 
 Each suggestion *type* (an "arm": kind, op and its main param, e.g. the neon bloom preset) has a
 Beta-Bernoulli preference whose prior mean is the rule's own confidence, worth PRIOR_STRENGTH
-decisions. Applying a suggestion counts as a success, dismissing it as a failure; the posterior
-mean replaces the rule's confidence before suggestions are ranked.
+decisions. Applying a suggestion counts as a success once a host confirms it, dismissing it as a
+failure; the posterior mean replaces the rule's confidence before suggestions are ranked.
 
 A client has one vote per project and suggestion (its latest verdict), so repeating a decision
 doesn't count twice; only the most recent MAX_VOTES votes are kept.

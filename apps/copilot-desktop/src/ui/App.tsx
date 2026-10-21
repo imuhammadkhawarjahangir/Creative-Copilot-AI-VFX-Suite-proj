@@ -7,6 +7,10 @@ type ProjectStream = { host: string; items: Suggestion[] };
 // used when the page runs outside Electron (no preload); Electron passes SENSEI_SERVICE_URL instead
 const DEFAULT_SERVICE_URL = "ws://127.0.0.1:8000";
 
+// Outcomes that changed nothing and recorded nothing: "failed" (the service couldn't send it; only the UI
+// that applied gets it) and "rejected" (the host refused it). The suggestion can be decided again.
+const UNDONE: ReadonlySet<ActionOutcome["status"]> = new Set(["failed", "rejected"]);
+
 function without<T>(record: Record<string, T>, key: string): Record<string, T> {
   const next = { ...record };
   delete next[key];
@@ -49,8 +53,7 @@ export default function App() {
             const key = `${msg.project_id}/${msg.suggestion_id}`;
             const outcome: ActionOutcome = { status: msg.status, detail: msg.detail };
             setOutcomes((prev) => ({ ...prev, [key]: outcome }));
-            // "failed" (sent only to the UI that applied): nothing was sent or recorded, so it can be decided again
-            if (msg.status === "failed") setVerdicts((prev) => without(prev, key));
+            if (UNDONE.has(msg.status)) setVerdicts((prev) => without(prev, key));
           } else if (msg.type === "ack_feedback") {
             if (!msg.ok) {
               // not recorded (the suggestion changed meanwhile): undo the verdict and say why
@@ -99,7 +102,7 @@ export default function App() {
     setVerdicts((prev) => ({ ...prev, [key]: verdict }));
     // what the card said about an earlier attempt that didn't go through no longer applies
     setRefusals((prev) => without(prev, key));
-    setOutcomes((prev) => (prev[key]?.status === "failed" ? without(prev, key) : prev));
+    setOutcomes((prev) => (prev[key] && UNDONE.has(prev[key].status) ? without(prev, key) : prev));
   };
 
   const projectIds = Object.keys(projects).sort();

@@ -2,6 +2,8 @@ import asyncio
 import hashlib
 import json
 import logging
+from collections import Counter
+from dataclasses import dataclass, field
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 from pydantic import ValidationError
 from .clients import authenticate
@@ -28,6 +30,15 @@ class UiClient:
         self.dropped = False  # set once; nothing is queued for this UI after that
 
 
+@dataclass
+class Sent:
+    # An action sent to a project's hosts: the results still owed, and whose Apply it answers.
+    project_id: str
+    item: dict  # the suggestion as it was applied
+    awaited: Counter = field(default_factory=Counter)  # host socket -> results it still owes (one per send)
+    appliers: set[str] = field(default_factory=set)     # clients whose Apply counts once a host confirms it
+
+
 class Hub:
     # Fans suggestions out to connected UIs, one stream per project, and routes applied
     # actions to the project's hosts. Every method is synchronous, so hub state never
@@ -37,8 +48,7 @@ class Hub:
         self.latest: dict[str, str] = {}               # project id -> last suggestions message
         self.hosts: dict[str, set[WebSocket]] = {}     # project id -> connected host sockets
         self.owners: dict[str, str] = {}               # project id -> client whose host opened it
-        # action id -> (project id, suggestion id, the host sockets it was sent to)
-        self.actions: dict[str, tuple[str, str, frozenset[WebSocket]]] = {}
+        self.actions: dict[str, Sent] = {}              # action id -> what was sent, and to whom
         self.background: set[asyncio.Task] = set()     # sends and closes in flight, kept referenced
 
     def spawn(self, coro):
@@ -118,7 +128,7 @@ class Hub:
         del self.hosts[project_id]
         self.owners.pop(project_id, None)
         self.latest.pop(project_id, None)
-        self.actions = {a: owner for a, owner in self.actions.items() if owner[0] != project_id}
+        self.actions = {a: sent for a, sent in self.actions.items() if sent.project_id != project_id}
         self.send_all(ProjectClosedMsg(project_id=project_id).model_dump_json())
 
     def find(self, project_id: str | None, suggestion_id: str) -> dict | None:
@@ -127,10 +137,10 @@ class Hub:
             return None
         return next((i for i in json.loads(self.latest[project_id])["items"] if i["id"] == suggestion_id), None)
 
-    def apply(self, project_id: str, suggestion_id: str) -> str | None:
-        # Sends a current suggestion's action to the project's hosts. The UI only names the
-        # suggestion: the action comes from what the service produced, re-checked against the
-        # per-op bounds. Returns a "failed" outcome for the UI, or None once sent.
+    def apply(self, project_id: str, suggestion_id: str, client: str = "") -> str | None:
+        # Sends a current suggestion's action to the project's hosts, for `client`'s UI. The UI only
+        # names the suggestion: the action comes from what the service produced, re-checked against
+        # the per-op bounds. Returns a "failed" outcome for the UI, or None once sent.
         def failed(detail: str) -> str:
             return ActionOutcomeMsg(project_id=project_id, suggestion_id=suggestion_id,
                                     status="failed", detail=detail).model_dump_json()
@@ -148,22 +158,25 @@ class Hub:
             return failed("the action is outside the allowed bounds")
         # the same suggestion in the same project always gets the same id, so hosts can deduplicate
         action_id = "act_" + hashlib.sha256(f"{project_id}/{suggestion_id}".encode()).hexdigest()[:12]
-        self.actions[action_id] = (project_id, suggestion_id, frozenset(hosts))
+        sent = self.actions.setdefault(action_id, Sent(project_id, item))
+        sent.awaited.update(hosts)
+        sent.appliers.add(client)
         message = ApplyActionMsg(action_id=action_id, project_id=project_id, suggestion_id=suggestion_id,
                                  op=op, params=params).model_dump_json()
         for host in hosts:
             self.spawn(host.send_text(message))
         return None
 
-    def report(self, project_id: str, host: WebSocket, result: ActionResultMsg) -> str | None:
-        # Forwards a host's result to every UI. Only a host the action was sent to may report it.
-        # Returns an error for the host, or None.
+    def report(self, host: WebSocket, result: ActionResultMsg) -> Sent | None:
+        # Forwards a host's result to every UI: one result each time the action was sent to that host,
+        # whichever project the host has open now. Returns the action, or None if no result was owed.
         sent = self.actions.get(result.action_id)
-        if sent is None or sent[0] != project_id or host not in sent[2]:
-            return "unknown action_id for this host"
-        self.send_all(ActionOutcomeMsg(project_id=project_id, suggestion_id=sent[1], action_id=result.action_id,
+        if sent is None or sent.awaited[host] <= 0:
+            return None
+        sent.awaited[host] -= 1
+        self.send_all(ActionOutcomeMsg(project_id=sent.project_id, suggestion_id=sent.item["id"], action_id=result.action_id,
                                        status=result.status, detail=result.detail).model_dump_json())
-        return None
+        return sent
 
 
 hub = Hub()
@@ -179,6 +192,23 @@ def record_vote(client: str, project_id: str, suggestion_id: str, verdict: str) 
     store.vote(client, project_id, suggestion_id, arm_of(item["kind"], item["action"]["op"], item["action"]["params"]), verdict)
     log.info("feedback %r %s (project %r, client %r)", suggestion_id, verdict, project_id, client or None)
     return None
+
+
+CONFIRMED = {"applied", "marked", "duplicate"}  # the host carried the action out, or already had
+
+
+def settle(sent: Sent, status: str):
+    # Applying is accepting, counted once a host confirms it: an action that was refused, or never
+    # answered, teaches nothing. The appliers are forgotten once every host has answered without confirming.
+    item = sent.item
+    if status in CONFIRMED:
+        for client in sent.appliers:
+            store.vote(client, sent.project_id, item["id"],
+                       arm_of(item["kind"], item["action"]["op"], item["action"]["params"]), "accepted")
+            log.info("feedback %r accepted (applied; project %r, client %r)", item["id"], sent.project_id, client or None)
+        sent.appliers.clear()
+    elif sum(sent.awaited.values()) == 0:
+        sent.appliers.clear()
 
 
 async def close_quietly(ws: WebSocket):
@@ -308,14 +338,13 @@ async def ws_host(ws: WebSocket):
 
     async def on_result(data: dict):
         result = ActionResultMsg.model_validate(data)
-        if hello is None:
-            await ws.send_text(error("send hello before action_result"))
+        # matched against what this socket was sent, so a result still counts after the host switched project
+        sent = hub.report(ws, result)
+        if sent is None:
+            await ws.send_text(error("no result is expected from this host for that action_id"))
             return
-        problem = hub.report(hello.project.id, ws, result)
-        if problem is not None:
-            await ws.send_text(error(problem))
-            return
-        log.info("action %s %s by host %r (client %r)", result.action_id, result.status, hello.host.name, client or None)
+        settle(sent, result.status)
+        log.info("action %s %s for project %r (client %r)", result.action_id, result.status, sent.project_id, client or None)
 
     try:
         await serve(ws, ws.send_text, {"context_frame": on_frame, "action_result": on_result}, on_hello)
@@ -341,12 +370,10 @@ async def ws_ui(ws: WebSocket):
     async def on_apply(data: dict):
         request = ApplyMsg.model_validate(data)
         log.info("apply %r requested for project %r (client %r)", request.suggestion_id, request.project_id, client or None)
-        outcome = hub.apply(request.project_id, request.suggestion_id)
+        # applying is accepting, counted once a host confirms it (settle); applying again keeps one vote
+        outcome = hub.apply(request.project_id, request.suggestion_id, client)
         if outcome is not None:
             await reply(outcome)
-            return
-        # applying is accepting, counted once the action is on its way; applying again keeps one vote
-        record_vote(client, request.project_id, request.suggestion_id, "accepted")
 
     async def on_feedback(data: dict):
         fb = FeedbackMsg.model_validate(data)

@@ -99,7 +99,7 @@ A grade or effect is for the shot it was suggested for, not whichever clip is un
    The `action_id` is derived from the project and suggestion, so applying the same suggestion again yields the same id; a host must apply an id at most once. A host must reject an action whose `project_id` isn't the project it has open: the editor may have switched since the suggestion was made, and the action would land on the wrong timeline.
 3. The host answers on its socket:
    `{ "type": "action_result", "action_id": "act_3f1c09a2b4d7", "status": "applied", "detail": null }`
-   `status` is `applied`, `marked` (the host can't do it directly and left a marker for the editor), `duplicate` (already applied) or `rejected` (with a `detail`). Only a host connection the action was sent to can report its result.
+   `status` is `applied`, `marked` (the host can't do it directly and left a marker for the editor), `duplicate` (already applied) or `rejected` (with a `detail`). A host connection answers each `apply_action` it was sent once; any other `action_result` gets an `error`.
 4. The service forwards the result to every UI, with `project_id` and `suggestion_id` added. If the service couldn't send the action (no host connected, the suggestion is no longer current, or it fails the bounds), the UI gets the same message with `"status": "failed"` and a `detail`.
 
 ## UI -> Service (feedback)
@@ -110,7 +110,7 @@ A grade or effect is for the shot it was suggested for, not whichever clip is un
   "project_id": "p1"
 }
 
-`verdict` is one of `accepted`, `rejected`, `modified`; `notes` is optional. Feedback trains the ranking, so it is only stored for a suggestion in its project's latest suggestions. Each client has one vote per project and suggestion: a later verdict replaces the earlier one, and applying a suggestion votes `accepted` once its action has been sent to the hosts.
+`verdict` is one of `accepted`, `rejected`, `modified`; `notes` is optional. Feedback trains the ranking, so it is only stored for a suggestion in its project's latest suggestions. Each client has one vote per project and suggestion: a later verdict replaces the earlier one, and applying a suggestion votes `accepted` once a host confirms it (`applied`, `marked` or `duplicate`). An apply that fails or that the host rejects counts for nothing.
 
 ## Service replies
 ### ack (to hello)

@@ -42,9 +42,9 @@ The first run downloads the Electron binary. Suggestions stream into the window,
 mock host's playhead moves. Apply sends the suggestion to the host (the mock host logs it, and the card shows the
 host's answer); Dismiss sends feedback to the service (visible in its logs). A decision is
 remembered for that suggestion: ids are derived from content, so a suggestion you applied or dismissed shows as
-decided whenever it reappears, for the rest of the session. If the service couldn't act on it (the suggestion
-changed just as you clicked), the decision is undone and the card says why. The buttons are disabled while the UI
-is disconnected.
+decided whenever it reappears, for the rest of the session. If it didn't take effect (the suggestion changed just as
+you clicked, or the host refused it), the decision is undone and the card says why. The buttons are disabled while
+the UI is disconnected.
 
 SENSEI learns from these decisions: kinds of suggestion you apply gain confidence and kinds you dismiss lose it
 (each suggestion counts once, with your latest decision), which changes their ranking (the card's rationale says when your feedback moved a score). Feedback is stored in

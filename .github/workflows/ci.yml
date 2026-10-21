@@ -11,8 +11,7 @@ jobs:
           python-version: "3.11"
       - run: |
           cd service
-          pip install -U pip
-          pip install -e ".[test]"
+          pip install --require-hashes -r requirements-test.lock
           pytest
 
   desktop-build:

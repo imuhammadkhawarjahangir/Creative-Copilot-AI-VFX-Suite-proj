@@ -21,6 +21,7 @@ test = [
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+pythonpath = ["."]
 # a missing WebSocket message would otherwise block receive() forever
 timeout = 10
 

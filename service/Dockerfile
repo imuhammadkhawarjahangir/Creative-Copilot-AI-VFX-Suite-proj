@@ -1,12 +1,12 @@
 FROM python:3.11-slim
 
-# pinned dependency set first, so code changes don't invalidate this layer
+# hash-pinned dependency set first, so code changes don't invalidate this layer
 COPY requirements.lock /tmp/requirements.lock
-RUN pip install --no-cache-dir -r /tmp/requirements.lock
+RUN pip install --no-cache-dir --require-hashes -r /tmp/requirements.lock && rm /tmp/requirements.lock
 
-COPY pyproject.toml /tmp/src/
-COPY sensei_service /tmp/src/sensei_service
-RUN pip install --no-cache-dir --no-deps /tmp/src && rm -rf /tmp/src /tmp/requirements.lock
+# the service has no build step; run it from source
+COPY sensei_service /app/sensei_service
+ENV PYTHONPATH=/app
 
 RUN useradd --create-home sensei
 USER sensei

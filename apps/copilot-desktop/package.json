@@ -2,12 +2,11 @@
   "name": "@sensei/copilot-desktop",
   "version": "0.1.0",
   "private": true,
-  "main": "electron/main.ts",
+  "main": "electron/main.js",
   "type": "module",
   "scripts": {
-    "dev": "concurrently \"vite\" \"electronmon\"",
-    "build": "vite build",
-    "electronmon": "tsx watch electron/main.ts"
+    "dev": "concurrently -k \"vite --host 127.0.0.1 --port 5180 --strictPort\" \"electron .\"",
+    "build": "vite build"
   },
   "dependencies": {
     "react": "^18.3.1",
@@ -17,7 +16,6 @@
   "devDependencies": {
     "concurrently": "^9.0.1",
     "electron": "^31.2.0",
-    "tsx": "^4.16.2",
     "typescript": "^5.5.4",
     "vite": "^5.4.3"
   }

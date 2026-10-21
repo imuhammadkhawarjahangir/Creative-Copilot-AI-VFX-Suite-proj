@@ -1,12 +1,13 @@
 import React, { useState } from "react";
 
-export default function SuggestionCard({ s }: { s: any }) {
-  const [status, setStatus] = useState<"idle" | "accepted" | "rejected">("idle");
+type Verdict = "accepted" | "rejected";
 
-  const sendFeedback = (verdict: "accepted" | "rejected") => {
+export default function SuggestionCard({ s, onFeedback }: { s: any; onFeedback: (verdict: Verdict) => void }) {
+  const [status, setStatus] = useState<"idle" | Verdict>("idle");
+
+  const sendFeedback = (verdict: Verdict) => {
     setStatus(verdict);
-    // In production: feedback would go to service via a shared bridge socket.
-    fetch("http://localhost:8000/health").catch(() => {});
+    onFeedback(verdict);
   };
 
   return (

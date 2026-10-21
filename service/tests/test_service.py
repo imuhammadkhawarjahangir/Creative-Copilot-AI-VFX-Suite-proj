@@ -1,10 +1,12 @@
+import asyncio
+
 import pytest
 from fastapi.testclient import TestClient
 from starlette.websockets import WebSocketDisconnect
 
 from sensei_service.config import Settings, settings
 from sensei_service.engine.suggest import build_suggestions
-from sensei_service.main import app, hub
+from sensei_service.main import UI_QUEUE_SIZE, Hub, app, hub
 from sensei_service.protocol import ContextFrameMsg
 
 HELLO = {"type": "hello", "host": {"name": "test", "version": "0"}, "project": {"id": "p", "fps": 24}}
@@ -194,3 +196,73 @@ def test_token_subprotocol_is_echoed_when_auth_is_off(client):
 def test_token_must_be_subprotocol_safe():
     with pytest.raises(ValueError):
         Settings(allowed_origins=[], token="has space")
+
+
+class FakeWs:
+    def __init__(self, stall=False):
+        self.stall = stall
+        self.sent = []
+        self.closed = False
+
+    async def send_text(self, message):
+        if self.stall:
+            await asyncio.Event().wait()  # a client that stopped reading: the send never completes
+        self.sent.append(message)
+
+    async def close(self, code=1000):
+        self.closed = True
+
+
+def queued(ui):
+    items = []
+    while not ui.queue.empty():
+        items.append(ui.queue.get_nowait())
+    return items
+
+
+def test_a_stalled_ui_is_dropped_without_blocking_others():
+    async def scenario():
+        hub = Hub()
+        stalled, healthy = FakeWs(stall=True), FakeWs()
+        uis = [hub.subscribe(stalled), hub.subscribe(healthy)]
+        for ui in uis:
+            ui.sender = asyncio.create_task(ui.pump())
+        messages = [f"m{i}" for i in range(UI_QUEUE_SIZE + 10)]
+        for message in messages:
+            hub.publish("p", message)  # synchronous: never waits on a UI
+            await asyncio.sleep(0)
+        await asyncio.sleep(0.05)
+        assert uis[0] not in hub.clients and stalled.closed
+        assert uis[1] in hub.clients and healthy.sent == messages
+        hub.unsubscribe(uis[1])
+
+    asyncio.run(scenario())
+
+
+def test_snapshot_is_queued_before_later_updates():
+    # a project closing right after a UI connects must not be resurrected by the replay
+    hub = Hub()
+    hub.open("p")
+    hub.publish("p", "latest")
+    ui = hub.subscribe(FakeWs())
+    hub.close("p")
+    assert queued(ui) == ["latest", '{"type":"project_closed","project_id":"p"}']
+
+
+def test_host_switching_projects_keeps_counts_right(client):
+    with client.websocket_connect("/ws/ui") as ui, client.websocket_connect("/ws/host") as host:
+        start_host(host, "a")
+        start_host(host, "b")
+        assert ui.receive_json() == {"type": "project_closed", "project_id": "a"}
+        start_host(host, "b")  # re-sending the same project must not close it
+        host.send_json(FRAME)
+        host.receive_json()
+        assert ui.receive_json()["type"] == "suggestions"  # no project_closed for "b" in between
+        assert hub.hosts == {"b": 1}
+    assert hub.hosts == {}
+
+
+def test_closing_an_unknown_project_is_harmless():
+    hub = Hub()
+    hub.close("never-opened")
+    assert hub.hosts == {}

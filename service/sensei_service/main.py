@@ -1,3 +1,4 @@
+import asyncio
 import hmac
 import json
 import logging
@@ -11,49 +12,95 @@ log = logging.getLogger("uvicorn.error")
 
 app = FastAPI(title="SENSEI Service", version="0.1.0")
 
+UI_QUEUE_SIZE = 256  # messages a UI may fall behind by before it is disconnected
+
+
+class UiClient:
+    # Everything sent to one UI goes through its queue and a single sender task,
+    # so a UI that stops reading only ever blocks itself.
+    def __init__(self, ws: WebSocket, backlog: int):
+        self.ws = ws
+        self.queue: asyncio.Queue[str] = asyncio.Queue(maxsize=UI_QUEUE_SIZE + backlog)
+        self.sender: asyncio.Task | None = None
+
+    async def pump(self):
+        while True:
+            await self.ws.send_text(await self.queue.get())
+
 
 class Hub:
-    # Fans suggestions out to connected UIs, one stream per project.
+    # Fans suggestions out to connected UIs, one stream per project. Every method is
+    # synchronous, so hub state never changes halfway through another update.
     def __init__(self):
-        self.clients: set[WebSocket] = set()
+        self.clients: set[UiClient] = set()
         self.latest: dict[str, str] = {}  # project id -> last suggestions message
         self.hosts: dict[str, int] = {}   # project id -> connected host count
 
-    async def send_all(self, message: str):
-        for ws in list(self.clients):
-            try:
-                await ws.send_text(message)
-            except Exception:
-                self.clients.discard(ws)
+    def subscribe(self, ws: WebSocket) -> UiClient:
+        # The snapshot is queued in the same step as registration, so no publish or close can
+        # land in between: a UI sees each open project's latest state, then every later message.
+        ui = UiClient(ws, backlog=len(self.latest))
+        for message in self.latest.values():
+            ui.queue.put_nowait(message)
+        self.clients.add(ui)
+        return ui
 
-    async def publish(self, project_id: str, message: str):
+    def unsubscribe(self, ui: UiClient):
+        self.clients.discard(ui)
+        if ui.sender is not None:
+            ui.sender.cancel()
+
+    def send(self, ui: UiClient, message: str):
+        if ui.queue.full():
+            log.warning("disconnecting a UI that stopped reading (%d messages behind)", ui.queue.qsize())
+            self.unsubscribe(ui)
+            asyncio.get_running_loop().create_task(close_quietly(ui.ws))
+            return
+        ui.queue.put_nowait(message)
+
+    def send_all(self, message: str):
+        for ui in list(self.clients):
+            self.send(ui, message)
+
+    def publish(self, project_id: str, message: str):
         self.latest[project_id] = message
-        await self.send_all(message)
+        self.send_all(message)
 
     def open(self, project_id: str):
         self.hosts[project_id] = self.hosts.get(project_id, 0) + 1
 
-    async def close(self, project_id: str):
-        self.hosts[project_id] -= 1
-        if self.hosts[project_id] == 0:
-            del self.hosts[project_id]
-            self.latest.pop(project_id, None)
-            await self.send_all(ProjectClosedMsg(project_id=project_id).model_dump_json())
+    def close(self, project_id: str):
+        remaining = self.hosts.get(project_id, 0) - 1
+        if remaining > 0:
+            self.hosts[project_id] = remaining
+            return
+        self.hosts.pop(project_id, None)
+        self.latest.pop(project_id, None)
+        self.send_all(ProjectClosedMsg(project_id=project_id).model_dump_json())
 
 
 hub = Hub()
 
 
+async def close_quietly(ws: WebSocket):
+    try:
+        await asyncio.wait_for(ws.close(code=1013), timeout=1)  # 1013: try again later
+    except Exception:
+        pass
+
+
 TOKEN_PROTOCOL = "sensei.token."
 
 
-async def accept(ws: WebSocket) -> bool:
-    # Browsers always send Origin, so this blocks other web pages (closing before accept -> HTTP 403).
+async def admit(ws: WebSocket) -> str | None:
+    # Checks the handshake before accepting it. Returns the subprotocol to echo ("" for none),
+    # or None after rejecting the connection (closing before accept -> HTTP 403).
+    # Browsers always send Origin, so this blocks other web pages.
     origin = ws.headers.get("origin")
     if origin is not None and origin not in settings.allowed_origins:
-        log.warning("rejected websocket from origin %s", origin)
+        log.warning("rejected websocket from origin %r", origin)
         await ws.close(code=1008)
-        return False
+        return None
 
     offered = [p for p in ws.scope.get("subprotocols", []) if p.startswith(TOKEN_PROTOCOL)]
     if settings.token is not None:
@@ -61,32 +108,31 @@ async def accept(ws: WebSocket) -> bool:
         if not hmac.compare_digest(presented.encode(), settings.token.encode()):
             log.warning("rejected websocket without a valid token")
             await ws.close(code=1008)
-            return False
+            return None
 
     # a browser drops the connection unless the subprotocol it offered is echoed back
-    await ws.accept(subprotocol=offered[0] if offered else None)
-    return True
+    return offered[0] if offered else ""
 
 
-async def send_error(ws: WebSocket, message: str):
-    await ws.send_text(json.dumps({"type": "error", "message": message}))
+def error(message: str) -> str:
+    return json.dumps({"type": "error", "message": message})
 
 
 def describe(err: ValidationError) -> str:
     return "; ".join(f"{'.'.join(map(str, e['loc']))}: {e['msg']}" for e in err.errors())
 
 
-async def serve(ws: WebSocket, on_hello=None, on_frame=None):
+async def serve(ws: WebSocket, reply, on_hello=None, on_frame=None):
     # Bad input gets an error reply; the socket stays open.
     while True:
         raw = await ws.receive_text()
         try:
             data = json.loads(raw)
         except json.JSONDecodeError:
-            await send_error(ws, "invalid json")
+            await reply(error("invalid json"))
             continue
         if not isinstance(data, dict):
-            await send_error(ws, "message must be a JSON object")
+            await reply(error("message must be a JSON object"))
             continue
 
         msg_type = data.get("type")
@@ -94,22 +140,22 @@ async def serve(ws: WebSocket, on_hello=None, on_frame=None):
             if msg_type == "hello":
                 hello = HelloMsg.model_validate(data)
                 if on_hello is not None:
-                    await on_hello(hello)
-                await ws.send_text(json.dumps({"type": "ack", "ok": True}))
+                    on_hello(hello)
+                await reply(json.dumps({"type": "ack", "ok": True}))
             elif msg_type == "context_frame":
                 if on_frame is None:
-                    await send_error(ws, "context_frame is only accepted on /ws/host")
+                    await reply(error("context_frame is only accepted on /ws/host"))
                 else:
                     await on_frame(ContextFrameMsg.model_validate(data))
             elif msg_type == "feedback":
                 fb = FeedbackMsg.model_validate(data)
                 # accept feedback (store later)
-                log.info("feedback %s %s (project %s)", fb.suggestion_id, fb.verdict, fb.project_id)
-                await ws.send_text(json.dumps({"type": "ack_feedback", "ok": True}))
+                log.info("feedback %r %s (project %r)", fb.suggestion_id, fb.verdict, fb.project_id)
+                await reply(json.dumps({"type": "ack_feedback", "ok": True}))
             else:
-                await send_error(ws, "unknown msg type")
+                await reply(error("unknown msg type"))
         except ValidationError as err:
-            await send_error(ws, f"invalid {msg_type}: {describe(err)}")
+            await reply(error(f"invalid {msg_type}: {describe(err)}"))
 
 
 @app.get("/health")
@@ -119,48 +165,57 @@ def health():
 
 @app.websocket("/ws/host")
 async def ws_host(ws: WebSocket):
-    if not await accept(ws):
+    subprotocol = await admit(ws)
+    if subprotocol is None:
         return
+    await ws.accept(subprotocol=subprotocol or None)
 
     hello: HelloMsg | None = None
 
-    async def on_hello(msg: HelloMsg):
+    def on_hello(msg: HelloMsg):
         nonlocal hello
-        if hello is None or hello.project.id != msg.project.id:
-            if hello is not None:
-                await hub.close(hello.project.id)
-            hub.open(msg.project.id)
-        hello = msg
+        previous, hello = hello, msg
+        # register the new project before releasing the old one, so re-sending the same
+        # project never closes it in between
+        hub.open(msg.project.id)
+        if previous is not None:
+            hub.close(previous.project.id)
 
     async def on_frame(ctx: ContextFrameMsg):
         if hello is None:
-            await send_error(ws, "send hello before context_frame")
+            await ws.send_text(error("send hello before context_frame"))
             return
         msg = build_suggestions(ctx)
         msg.project_id, msg.host = hello.project.id, hello.host.name
         suggestions = msg.model_dump_json()
+        hub.publish(hello.project.id, suggestions)  # never waits on a UI
         await ws.send_text(suggestions)
-        await hub.publish(hello.project.id, suggestions)
 
     try:
-        await serve(ws, on_hello, on_frame)
+        await serve(ws, ws.send_text, on_hello, on_frame)
     except WebSocketDisconnect:
         return
     finally:
         if hello is not None:
-            await hub.close(hello.project.id)
+            hub.close(hello.project.id)
 
 
 @app.websocket("/ws/ui")
 async def ws_ui(ws: WebSocket):
-    if not await accept(ws):
+    subprotocol = await admit(ws)
+    if subprotocol is None:
         return
-    hub.clients.add(ws)
+    # subscribed before the handshake completes, so nothing published meanwhile is missed
+    ui = hub.subscribe(ws)
+
+    async def reply(message: str):
+        hub.send(ui, message)
+
     try:
-        for message in list(hub.latest.values()):
-            await ws.send_text(message)
-        await serve(ws)
+        await ws.accept(subprotocol=subprotocol or None)
+        ui.sender = asyncio.create_task(ui.pump())
+        await serve(ws, reply)
     except WebSocketDisconnect:
         return
     finally:
-        hub.clients.discard(ws)
+        hub.unsubscribe(ui)

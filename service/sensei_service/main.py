@@ -36,7 +36,9 @@ class Hub:
         self.clients: set[UiClient] = set()
         self.latest: dict[str, str] = {}               # project id -> last suggestions message
         self.hosts: dict[str, set[WebSocket]] = {}     # project id -> connected host sockets
-        self.actions: dict[str, tuple[str, str]] = {}  # action id -> (project id, suggestion id)
+        self.owners: dict[str, str] = {}               # project id -> client whose host opened it
+        # action id -> (project id, suggestion id, the host sockets it was sent to)
+        self.actions: dict[str, tuple[str, str, frozenset[WebSocket]]] = {}
         self.background: set[asyncio.Task] = set()     # sends and closes in flight, kept referenced
 
     def spawn(self, coro):
@@ -96,8 +98,15 @@ class Hub:
         self.latest[project_id] = message
         self.send_all(message)
 
-    def open(self, project_id: str, host: WebSocket):
+    def open(self, project_id: str, host: WebSocket, client: str) -> bool:
+        # A project belongs to the client whose host opened it: further hosts of that client may
+        # join, others are refused (they would receive its actions). Without per-client auth every
+        # host is the same client.
+        if self.owners.get(project_id, client) != client:
+            return False
+        self.owners[project_id] = client
         self.hosts.setdefault(project_id, set()).add(host)
+        return True
 
     def close(self, project_id: str, host: WebSocket):
         hosts = self.hosts.get(project_id)
@@ -107,6 +116,7 @@ class Hub:
         if hosts:
             return
         del self.hosts[project_id]
+        self.owners.pop(project_id, None)
         self.latest.pop(project_id, None)
         self.actions = {a: owner for a, owner in self.actions.items() if owner[0] != project_id}
         self.send_all(ProjectClosedMsg(project_id=project_id).model_dump_json())
@@ -138,18 +148,19 @@ class Hub:
             return failed("the action is outside the allowed bounds")
         # the same suggestion in the same project always gets the same id, so hosts can deduplicate
         action_id = "act_" + hashlib.sha256(f"{project_id}/{suggestion_id}".encode()).hexdigest()[:12]
-        self.actions[action_id] = (project_id, suggestion_id)
+        self.actions[action_id] = (project_id, suggestion_id, frozenset(hosts))
         message = ApplyActionMsg(action_id=action_id, suggestion_id=suggestion_id, op=op, params=params).model_dump_json()
         for host in hosts:
             self.spawn(host.send_text(message))
         return None
 
-    def report(self, project_id: str, result: ActionResultMsg) -> str | None:
-        # Forwards a host's result to every UI. Returns an error for the host, or None.
-        owner = self.actions.get(result.action_id)
-        if owner is None or owner[0] != project_id:
-            return "unknown action_id for this host's project"
-        self.send_all(ActionOutcomeMsg(project_id=project_id, suggestion_id=owner[1], action_id=result.action_id,
+    def report(self, project_id: str, host: WebSocket, result: ActionResultMsg) -> str | None:
+        # Forwards a host's result to every UI. Only a host the action was sent to may report it.
+        # Returns an error for the host, or None.
+        sent = self.actions.get(result.action_id)
+        if sent is None or sent[0] != project_id or host not in sent[2]:
+            return "unknown action_id for this host"
+        self.send_all(ActionOutcomeMsg(project_id=project_id, suggestion_id=sent[1], action_id=result.action_id,
                                        status=result.status, detail=result.detail).model_dump_json())
         return None
 
@@ -236,9 +247,8 @@ async def serve(ws: WebSocket, reply, handlers=None, on_hello=None, active=lambd
         try:
             if msg_type == "hello":
                 hello = HelloMsg.model_validate(data)
-                if on_hello is not None:
-                    on_hello(hello)
-                await reply(json.dumps({"type": "ack", "ok": True}))
+                problem = on_hello(hello) if on_hello is not None else None
+                await reply(error(problem) if problem else json.dumps({"type": "ack", "ok": True}))
             elif msg_type == "feedback":
                 fb = FeedbackMsg.model_validate(data)
                 record_feedback(fb.suggestion_id, fb.verdict, fb.project_id, client)
@@ -268,15 +278,18 @@ async def ws_host(ws: WebSocket):
 
     hello: HelloMsg | None = None
 
-    def on_hello(msg: HelloMsg):
+    def on_hello(msg: HelloMsg) -> str | None:
         nonlocal hello
-        previous, hello = hello, msg
+        if hello is None or hello.project.id != msg.project.id:
+            # register the new project before releasing the old one
+            if not hub.open(msg.project.id, ws, client):
+                log.warning("refused project %r to client %r: another client's host holds it", msg.project.id, client or None)
+                return f"project {msg.project.id!r} is held by another client"
+            if hello is not None:
+                hub.close(hello.project.id, ws)
+        hello = msg
         log.info("project %r registered by host %r (client %r)", msg.project.id, msg.host.name, client or None)
-        # register the new project before releasing the old one; re-sending the same project changes nothing
-        if previous is None or previous.project.id != msg.project.id:
-            hub.open(msg.project.id, ws)
-            if previous is not None:
-                hub.close(previous.project.id, ws)
+        return None
 
     async def on_frame(data: dict):
         ctx = ContextFrameMsg.model_validate(data)
@@ -294,7 +307,7 @@ async def ws_host(ws: WebSocket):
         if hello is None:
             await ws.send_text(error("send hello before action_result"))
             return
-        problem = hub.report(hello.project.id, result)
+        problem = hub.report(hello.project.id, ws, result)
         if problem is not None:
             await ws.send_text(error(problem))
             return

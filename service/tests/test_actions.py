@@ -3,6 +3,8 @@ import re
 import pytest
 from fastapi.testclient import TestClient
 
+from sensei_service.clients import Client, digest
+from sensei_service.config import settings
 from sensei_service.engine.suggest import build_suggestions
 from sensei_service import main
 from sensei_service.feedback import FeedbackStore
@@ -29,6 +31,7 @@ def client(monkeypatch):
     hub.clients.clear()
     hub.latest.clear()
     hub.hosts.clear()
+    hub.owners.clear()
     hub.actions.clear()
     # As a context manager, every WebSocket session shares one event loop, as under uvicorn;
     # otherwise each session gets its own loop and cross-session wake-ups can be lost.
@@ -172,10 +175,61 @@ def test_the_hub_rechecks_bounds_before_sending():
 
     local = Hub()
     host = Host()
-    local.open("p", host)
+    local.open("p", host, "")
     local.latest["p"] = ('{"type": "suggestions", "ts": 1, "project_id": "p", "host": "t", "items": [{"id": "sug_1234abcd", '
                          '"kind": "vfx", "title": "t", "confidence": 0.5, "rationale": "r", "action": {"op": "apply_vfx_preset", '
                          '"params": {"preset": "x", "threshold": 9, "intensity": 0.1, "radius": 0.1}}}]}')
     outcome = local.apply("p", "sug_1234abcd")
     assert outcome is not None and '"status":"failed"' in outcome and "bounds" in outcome
     assert host.sent == [] and local.actions == {}
+
+
+@pytest.fixture
+def host_clients(monkeypatch):
+    # per-client mode with two different host clients and a UI client
+    tokens = {"resolve": "resolve-token", "intruder": "intruder-token", "desktop": "ui-token"}
+    monkeypatch.setattr(settings, "clients", [
+        Client("resolve", ("host",), digest(tokens["resolve"])),
+        Client("intruder", ("host",), digest(tokens["intruder"])),
+        Client("desktop", ("ui",), digest(tokens["desktop"])),
+    ])
+    return {name: [f"sensei.token.{token}"] for name, token in tokens.items()}
+
+
+def test_another_client_cannot_take_over_a_project(client, host_clients):
+    with client.websocket_connect("/ws/ui", subprotocols=host_clients["desktop"]) as ui, \
+            client.websocket_connect("/ws/host", subprotocols=host_clients["resolve"]) as owner, \
+            client.websocket_connect("/ws/host", subprotocols=host_clients["intruder"]) as intruder:
+        suggestions = start(owner)
+        ui.receive_json()
+        intruder.send_json(hello("p"))
+        assert "held by another client" in intruder.receive_json()["message"]
+
+        ui.send_json({"type": "apply", "project_id": "p", "suggestion_id": item_of(suggestions, "vfx")["id"]})
+        action = owner.receive_json()
+        assert action["type"] == "apply_action"
+        # the intruder received no action (its next message is the error below) and can't report on it
+        intruder.send_json({"type": "action_result", "action_id": action["action_id"], "status": "applied"})
+        assert "send hello" in intruder.receive_json()["message"]
+
+
+def test_another_host_of_the_same_client_may_join(client, host_clients):
+    with client.websocket_connect("/ws/host", subprotocols=host_clients["resolve"]) as first, \
+            client.websocket_connect("/ws/host", subprotocols=host_clients["resolve"]) as second:
+        start(first)
+        second.send_json(hello("p"))
+        assert second.receive_json() == ACK
+        assert len(hub.hosts["p"]) == 2
+
+
+def test_only_the_hosts_an_action_was_sent_to_may_report_it(client):
+    with client.websocket_connect("/ws/ui") as ui, client.websocket_connect("/ws/host") as host:
+        suggestions = start(host)
+        ui.receive_json()
+        ui.send_json({"type": "apply", "project_id": "p", "suggestion_id": item_of(suggestions, "vfx")["id"]})
+        action = host.receive_json()
+        with client.websocket_connect("/ws/host") as late:  # joins the project after the action was sent
+            late.send_json(hello("p"))
+            assert late.receive_json() == ACK
+            late.send_json({"type": "action_result", "action_id": action["action_id"], "status": "applied"})
+            assert "unknown action_id" in late.receive_json()["message"]

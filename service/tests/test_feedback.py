@@ -71,6 +71,7 @@ def client(monkeypatch):
     hub.clients.clear()
     hub.latest.clear()
     hub.hosts.clear()
+    hub.owners.clear()
     hub.actions.clear()
     with TestClient(app) as test_client:
         yield test_client

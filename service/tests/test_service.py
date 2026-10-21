@@ -42,6 +42,7 @@ def client(monkeypatch):
     hub.clients.clear()
     hub.latest.clear()
     hub.hosts.clear()
+    hub.owners.clear()
     hub.actions.clear()
     # As a context manager, every WebSocket session shares one event loop, as under uvicorn;
     # otherwise each session gets its own loop and cross-session wake-ups can be lost.
@@ -328,7 +329,7 @@ def test_snapshot_is_queued_before_later_updates():
     # a project closing right after a UI connects must not be resurrected by the replay
     hub = Hub()
     host = FakeWs()
-    hub.open("p", host)
+    hub.open("p", host, "")
     hub.publish("p", "latest")
     ui = hub.subscribe(FakeWs())
     hub.close("p", host)

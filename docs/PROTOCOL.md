@@ -6,7 +6,7 @@ Transport: WebSocket JSON
 - `/ws/host` — editing hosts. Send `hello` first (it registers the host's project), then `context_frame`, `action_result` and `feedback`. Each `context_frame` is answered with `suggestions` on the same socket; a frame sent before `hello` gets an `error`. Hosts also receive `apply_action` (see *Applying a suggestion*).
 - `/ws/ui` — copilot UIs. No handshake: UIs don't register a project (a `hello` here is acknowledged and ignored). Send `apply` and `feedback`. On connect, receive the latest `suggestions` of every open project; then every `suggestions` message produced from any host's frames, and `project_closed` when the last host of a project disconnects, in that order. A UI that falls 256 messages behind is disconnected (close code 1013) rather than slowing everyone else down.
 
-Suggestions are scoped per project: each `suggestions` message carries the `project_id` and `host` name from that host's `hello`, so a UI can keep one stream per project.
+Suggestions are scoped per project: each `suggestions` message carries the `project_id` and `host` name from that host's `hello`, so a UI can keep one stream per project. With per-client tokens, a project belongs to the client whose host opened it; a `hello` for it from another client's host gets an `error` (more hosts of the same client may join).
 - `GET /health` — `{"ok": true}`
 
 WebSocket handshakes that carry a browser `Origin` not listed in `SENSEI_ALLOWED_ORIGINS` (comma-separated, default `http://127.0.0.1:5180,http://localhost:5180,sensei://app`: the desktop UI's dev server and its packaged origin) are rejected with HTTP 403. Native clients such as host adapters send no `Origin` and are accepted.
@@ -95,7 +95,7 @@ An action describes an edit. These are the only ops a host is ever asked to perf
    The `action_id` is derived from the project and suggestion, so applying the same suggestion again yields the same id; a host must apply an id at most once.
 3. The host answers on its socket:
    `{ "type": "action_result", "action_id": "act_3f1c09a2b4d7", "status": "applied", "detail": null }`
-   `status` is `applied`, `marked` (the host can't do it directly and left a marker for the editor), `duplicate` (already applied) or `rejected` (with a `detail`). A host can only report actions of its own project.
+   `status` is `applied`, `marked` (the host can't do it directly and left a marker for the editor), `duplicate` (already applied) or `rejected` (with a `detail`). Only a host connection the action was sent to can report its result.
 4. The service forwards the result to every UI, with `project_id` and `suggestion_id` added. If the service couldn't send the action (no host connected, the suggestion is no longer current, or it fails the bounds), the UI gets the same message with `"status": "failed"` and a `detail`.
 
 ## UI/Host -> Service (feedback)

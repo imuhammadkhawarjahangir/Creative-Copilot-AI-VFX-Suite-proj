@@ -42,8 +42,8 @@ host's answer); Dismiss sends feedback to the service (visible in its logs). A d
 remembered for that suggestion: ids are derived from content, so a suggestion you applied or dismissed shows as
 decided whenever it reappears, for the rest of the session. The buttons are disabled while the UI is disconnected.
 
-SENSEI learns from these decisions: kinds of suggestion you apply gain confidence and kinds you dismiss lose it,
-which changes their ranking (the card's rationale says when your feedback moved a score). Feedback is stored in
+SENSEI learns from these decisions: kinds of suggestion you apply gain confidence and kinds you dismiss lose it
+(each suggestion counts once, with your latest decision), which changes their ranking (the card's rationale says when your feedback moved a score). Feedback is stored in
 `~/.sensei/feedback.sqlite3` (the `sensei-data` volume under Docker). Delete it to start over, or set
 `SENSEI_FEEDBACK_DB=:memory:` to keep nothing between runs.
 

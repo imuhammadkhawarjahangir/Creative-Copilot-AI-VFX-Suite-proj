@@ -53,7 +53,7 @@ class FeedbackMsg(BaseModel):
     type: Literal["feedback"]
     suggestion_id: SuggestionId
     verdict: Literal["accepted", "rejected", "modified"]
-    project_id: Optional[ProjectId] = None
+    project_id: ProjectId
     notes: Optional[Annotated[str, StringConstraints(max_length=1000)]] = None
 
 class Action(BaseModel):

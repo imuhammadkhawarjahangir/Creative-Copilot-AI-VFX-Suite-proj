@@ -3,7 +3,7 @@
 Transport: WebSocket JSON
 
 ## Endpoints
-- `/ws/host` — editing hosts. Send `hello` first (it registers the host's project), then `context_frame`, `action_result` and `feedback`. Each `context_frame` is answered with `suggestions` on the same socket; a frame sent before `hello` gets an `error`. Hosts also receive `apply_action` (see *Applying a suggestion*).
+- `/ws/host` — editing hosts. Send `hello` first (it registers the host's project), then `context_frame` and `action_result`. Each `context_frame` is answered with `suggestions` on the same socket; a frame sent before `hello` gets an `error`. Hosts also receive `apply_action` (see *Applying a suggestion*).
 - `/ws/ui` — copilot UIs. No handshake: UIs don't register a project (a `hello` here is acknowledged and ignored). Send `apply` and `feedback`. On connect, receive the latest `suggestions` of every open project; then every `suggestions` message produced from any host's frames, and `project_closed` when the last host of a project disconnects, in that order. A UI that falls 256 messages behind is disconnected (close code 1013) rather than slowing everyone else down.
 
 Suggestions are scoped per project: each `suggestions` message carries the `project_id` and `host` name from that host's `hello`, so a UI can keep one stream per project. With per-client tokens, a project belongs to the client whose host opened it; a `hello` for it from another client's host gets an `error` (more hosts of the same client may join).
@@ -98,7 +98,7 @@ An action describes an edit. These are the only ops a host is ever asked to perf
    `status` is `applied`, `marked` (the host can't do it directly and left a marker for the editor), `duplicate` (already applied) or `rejected` (with a `detail`). Only a host connection the action was sent to can report its result.
 4. The service forwards the result to every UI, with `project_id` and `suggestion_id` added. If the service couldn't send the action (no host connected, the suggestion is no longer current, or it fails the bounds), the UI gets the same message with `"status": "failed"` and a `detail`.
 
-## UI/Host -> Service (feedback)
+## UI -> Service (feedback)
 {
   "type": "feedback",
   "suggestion_id": "sug_001",
@@ -106,7 +106,7 @@ An action describes an edit. These are the only ops a host is ever asked to perf
   "project_id": "p1"
 }
 
-`verdict` is one of `accepted`, `rejected`, `modified`; `project_id` and `notes` are optional.
+`verdict` is one of `accepted`, `rejected`, `modified`; `notes` is optional. Feedback trains the ranking, so it is only stored for a suggestion in its project's latest suggestions. Each client has one vote per project and suggestion: a later verdict replaces the earlier one, and applying a suggestion votes `accepted` once its action has been sent to the hosts.
 
 ## Service replies
 ### ack (to hello)
@@ -114,6 +114,9 @@ An action describes an edit. These are the only ops a host is ever asked to perf
 
 ### ack_feedback (to feedback)
 { "type": "ack_feedback", "ok": true }
+
+Feedback on a suggestion that isn't current is not stored:
+{ "type": "ack_feedback", "ok": false, "detail": "this suggestion is no longer current" }
 
 ### project_closed (to UIs)
 Sent when the last host of a project disconnects; the project's latest suggestions are dropped.

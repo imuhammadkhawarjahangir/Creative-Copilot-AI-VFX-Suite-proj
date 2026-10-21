@@ -145,8 +145,8 @@ def test_bad_input_gets_error_and_socket_stays_open(client, payload, expected):
 
 def test_feedback_is_validated(client):
     with client.websocket_connect("/ws/ui") as ui:
-        ui.send_json({"type": "feedback", "suggestion_id": "sug_1234abcd", "verdict": "accepted"})
-        assert ui.receive_json() == {"type": "ack_feedback", "ok": True}
+        ui.send_json({"type": "feedback", "suggestion_id": "sug_1234abcd", "verdict": "accepted", "project_id": "p"})
+        assert ui.receive_json() == {"type": "ack_feedback", "ok": False, "detail": "this suggestion is no longer current"}
 
         ui.send_json({"type": "feedback", "verdict": "loved it"})
         reply = ui.receive_json()
@@ -203,8 +203,8 @@ def test_clients_may_only_use_their_roles(client, per_client, path, name, allowe
     subprotocols = [f"sensei.token.{per_client[name]}"]
     if allowed:
         with client.websocket_connect(path, subprotocols=subprotocols) as ws:
-            ws.send_json({"type": "feedback", "suggestion_id": "sug_1234abcd", "verdict": "accepted"})
-            assert ws.receive_json() == {"type": "ack_feedback", "ok": True}
+            ws.send_json(HELLO)
+            assert ws.receive_json() == ACK
     else:
         with pytest.raises(WebSocketDisconnect) as exc:
             with client.websocket_connect(path, subprotocols=subprotocols):
@@ -355,17 +355,21 @@ def test_closing_an_unknown_project_is_harmless():
     assert hub.hosts == {}
 
 
-@pytest.mark.parametrize("message", [
-    {"type": "feedback", "suggestion_id": "sug_1234abcd\nINFO: forged log line", "verdict": "accepted"},
-    {"type": "feedback", "suggestion_id": "sug_1234abcd", "verdict": "accepted", "project_id": "p\n1"},
-    {"type": "feedback", "suggestion_id": "sug_1234abcd", "verdict": "accepted", "notes": "x" * 1001},
-    {**HELLO, "project": {"id": "a" * 65, "fps": 24}},
-    {**HELLO, "host": {"name": "evil\r\nhost", "version": "0"}},
+FEEDBACK = {"type": "feedback", "suggestion_id": "sug_1234abcd", "verdict": "accepted", "project_id": "p"}
+
+
+@pytest.mark.parametrize("path, message", [
+    ("/ws/ui", {**FEEDBACK, "suggestion_id": "sug_1234abcd\nINFO: forged log line"}),
+    ("/ws/ui", {**FEEDBACK, "project_id": "p\n1"}),
+    ("/ws/ui", {**FEEDBACK, "notes": "x" * 1001}),
+    ("/ws/host", {**HELLO, "project": {"id": "a" * 65, "fps": 24}}),
+    ("/ws/host", {**HELLO, "host": {"name": "evil\r\nhost", "version": "0"}}),
 ])
-def test_client_strings_are_bounded(client, message):
-    with client.websocket_connect("/ws/host") as host:
-        host.send_json(message)
-        assert host.receive_json()["type"] == "error"
+def test_client_strings_are_bounded(client, path, message):
+    with client.websocket_connect(path) as ws:
+        ws.send_json(message)
+        reply = ws.receive_json()
+        assert reply["type"] == "error" and reply["message"].startswith("invalid ")
 
 
 def test_serve_stops_once_the_client_is_dropped():

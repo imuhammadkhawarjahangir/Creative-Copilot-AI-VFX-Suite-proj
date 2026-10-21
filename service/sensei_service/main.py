@@ -169,12 +169,15 @@ hub = Hub()
 store = FeedbackStore(settings.feedback_db)
 
 
-def record_feedback(suggestion_id: str, verdict: str, project_id: str | None, client: str):
-    # Stored for learning when the suggestion is current (its content tells us its type).
+def record_vote(client: str, project_id: str, suggestion_id: str, verdict: str) -> str | None:
+    # A UI's verdict on a suggestion of an open project's latest suggestions (its content tells us its
+    # type); anything else isn't stored. Returns why it wasn't recorded, or None.
     item = hub.find(project_id, suggestion_id)
-    arm = arm_of(item["kind"], item["action"]["op"], item["action"]["params"]) if item else None
-    store.record(suggestion_id, verdict, arm, project_id, client or None)
+    if item is None:
+        return "this suggestion is no longer current"
+    store.vote(client, project_id, suggestion_id, arm_of(item["kind"], item["action"]["op"], item["action"]["params"]), verdict)
     log.info("feedback %r %s (project %r, client %r)", suggestion_id, verdict, project_id, client or None)
+    return None
 
 
 async def close_quietly(ws: WebSocket):
@@ -223,10 +226,10 @@ def describe(err: ValidationError) -> str:
     return "; ".join(f"{'.'.join(map(str, e['loc']))}: {e['msg']}" for e in err.errors())
 
 
-ONLY_ON = {"context_frame": "/ws/host", "action_result": "/ws/host", "apply": "/ws/ui"}
+ONLY_ON = {"context_frame": "/ws/host", "action_result": "/ws/host", "apply": "/ws/ui", "feedback": "/ws/ui"}
 
 
-async def serve(ws: WebSocket, reply, handlers=None, on_hello=None, active=lambda: True, client=""):
+async def serve(ws: WebSocket, reply, handlers=None, on_hello=None, active=lambda: True):
     # Bad input gets an error reply; the socket stays open. Stops as soon as active() turns false.
     # `handlers` maps the endpoint's own message types to async handlers that validate their input.
     handlers = handlers or {}
@@ -249,10 +252,6 @@ async def serve(ws: WebSocket, reply, handlers=None, on_hello=None, active=lambd
                 hello = HelloMsg.model_validate(data)
                 problem = on_hello(hello) if on_hello is not None else None
                 await reply(error(problem) if problem else json.dumps({"type": "ack", "ok": True}))
-            elif msg_type == "feedback":
-                fb = FeedbackMsg.model_validate(data)
-                record_feedback(fb.suggestion_id, fb.verdict, fb.project_id, client)
-                await reply(json.dumps({"type": "ack_feedback", "ok": True}))
             elif msg_type in handlers:
                 await handlers[msg_type](data)
             elif msg_type in ONLY_ON:
@@ -314,7 +313,7 @@ async def ws_host(ws: WebSocket):
         log.info("action %s %s by host %r (client %r)", result.action_id, result.status, hello.host.name, client or None)
 
     try:
-        await serve(ws, ws.send_text, {"context_frame": on_frame, "action_result": on_result}, on_hello, client=client)
+        await serve(ws, ws.send_text, {"context_frame": on_frame, "action_result": on_result}, on_hello)
     except WebSocketDisconnect:
         return
     finally:
@@ -337,15 +336,23 @@ async def ws_ui(ws: WebSocket):
     async def on_apply(data: dict):
         request = ApplyMsg.model_validate(data)
         log.info("apply %r requested for project %r (client %r)", request.suggestion_id, request.project_id, client or None)
-        record_feedback(request.suggestion_id, "accepted", request.project_id, client)  # applying = accepting
         outcome = hub.apply(request.project_id, request.suggestion_id)
         if outcome is not None:
             await reply(outcome)
+            return
+        # applying is accepting, counted once the action is on its way; applying again keeps one vote
+        record_vote(client, request.project_id, request.suggestion_id, "accepted")
+
+    async def on_feedback(data: dict):
+        fb = FeedbackMsg.model_validate(data)
+        problem = record_vote(client, fb.project_id, fb.suggestion_id, fb.verdict)
+        await reply(json.dumps({"type": "ack_feedback", "ok": True} if problem is None else
+                               {"type": "ack_feedback", "ok": False, "detail": problem}))
 
     try:
         await ws.accept(subprotocol=subprotocol or None)
         hub.start(ui)
-        await serve(ws, reply, {"apply": on_apply}, active=lambda: not ui.dropped, client=client)
+        await serve(ws, reply, {"apply": on_apply, "feedback": on_feedback}, active=lambda: not ui.dropped)
         # Dropped (fell behind, or its socket failed). Our close may still be waiting for the socket
         # to drain, and Starlette refuses receive_text() once a close has begun, so read raw messages
         # (ignored) until the connection ends; uvicorn's keepalive still cuts a client that never reads.

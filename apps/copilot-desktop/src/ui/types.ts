@@ -1,6 +1,6 @@
 export type Verdict = "accepted" | "rejected";
 
-export type SenseiConfig = { token: string | null };
+export type SenseiConfig = { token: string | null; serviceUrl: string };
 
 declare global {
   interface Window {

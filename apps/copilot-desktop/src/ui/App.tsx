@@ -4,7 +4,8 @@ import type { Suggestion, Verdict } from "./types";
 
 type ProjectStream = { host: string; items: Suggestion[] };
 
-const WS_URL = "ws://127.0.0.1:8000/ws/ui";
+// used when the page runs outside Electron (no preload); Electron passes SENSEI_SERVICE_URL instead
+const DEFAULT_SERVICE_URL = "ws://127.0.0.1:8000";
 
 export default function App() {
   const [projects, setProjects] = useState<Record<string, ProjectStream>>({});
@@ -18,9 +19,10 @@ export default function App() {
     let retry: ReturnType<typeof setTimeout> | undefined;
     // optional shared secret, presented as a WebSocket subprotocol (see docs/PROTOCOL.md)
     let protocols: string[] = [];
+    let url = `${DEFAULT_SERVICE_URL}/ws/ui`;
 
     const connect = () => {
-      const ws = new WebSocket(WS_URL, protocols);
+      const ws = new WebSocket(url, protocols);
       wsRef.current = ws;
 
       ws.onopen = () => {
@@ -51,7 +53,8 @@ export default function App() {
       };
     };
 
-    (window.sensei?.config() ?? Promise.resolve({ token: null })).then(({ token }) => {
+    (window.sensei?.config() ?? Promise.resolve({ token: null, serviceUrl: DEFAULT_SERVICE_URL })).then(({ token, serviceUrl }) => {
+      url = `${serviceUrl}/ws/ui`;
       if (token) protocols = [`sensei.token.${token}`];
       if (!stopped) connect();
     });

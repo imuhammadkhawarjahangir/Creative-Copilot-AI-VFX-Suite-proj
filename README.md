@@ -41,6 +41,8 @@ remembered for that suggestion: ids are derived from content, so a suggestion yo
 decided whenever it reappears, for the rest of the session. The buttons are disabled while the UI is disconnected.
 
 `npm start` runs the built UI instead of the dev server, and `npm run dist` packages a standalone app into `release/`.
+If the service runs elsewhere, point the UI at it with `SENSEI_SERVICE_URL` (default `ws://127.0.0.1:8000`); the
+UI's Content-Security-Policy follows it.
 
 ### Without Docker
 ```bash

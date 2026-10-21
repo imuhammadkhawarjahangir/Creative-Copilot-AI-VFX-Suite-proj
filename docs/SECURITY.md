@@ -40,3 +40,7 @@
   text: give it a host-only client, so that file can't be used to read suggestions.
 - Every UI sees every open project, and all feedback trains one shared ranking: tokens limit a client to one vote
   per suggestion, not to its own projects or its own preferences.
+- Any client with the `ui` role can apply a current suggestion to any open project, including one whose host belongs
+  to another client. Apply only ever sends the service's own bounds-checked action for that suggestion, but it does
+  edit that host's timeline (a grade, or a marker). Project ownership limits which hosts receive a project's actions,
+  not which UIs may request them. Give the `ui` role only to clients you would let edit every connected host.

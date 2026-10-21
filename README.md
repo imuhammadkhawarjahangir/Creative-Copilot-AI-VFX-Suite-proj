@@ -49,7 +49,11 @@ SENSEI learns from these decisions: kinds of suggestion you apply gain confidenc
 `~/.sensei/feedback.sqlite3` (the `sensei-data` volume under Docker). Delete it to start over, or set
 `SENSEI_FEEDBACK_DB=:memory:` to keep nothing between runs.
 
-`npm start` runs the built UI instead of the dev server, and `npm run dist` packages a standalone app into `release/`.
+`npm start` runs the built UI instead of the dev server, and `npm run dist` packages a standalone app for your OS
+into `release/` (on Windows also an installer, `release/installer/SENSEI-Setup-<version>.exe`). Builds are unsigned
+unless signing is configured: `SENSEI_WIN_CERT_FILE` (a `.pfx`) and `SENSEI_WIN_CERT_PASSWORD` sign the Windows app
+and installer; `SENSEI_MAC_SIGN_IDENTITY` signs the macOS app, which is also notarized when `APPLE_ID`,
+`APPLE_APP_SPECIFIC_PASSWORD` and `APPLE_TEAM_ID` are set. CI packages all three OSes and keeps the builds for a week.
 If the service runs elsewhere, point the UI at it with `SENSEI_SERVICE_URL` (default `ws://127.0.0.1:8000`); the
 UI's Content-Security-Policy follows it.
 

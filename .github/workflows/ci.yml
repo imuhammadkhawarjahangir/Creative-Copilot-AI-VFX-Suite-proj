@@ -45,6 +45,30 @@ jobs:
           npm run typecheck
           npm run build
 
+  package:
+    # the packaged app on each OS (unsigned), plus the Squirrel installer on Windows
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: "24"
+      - working-directory: apps/copilot-desktop
+        run: |
+          npm ci
+          npm run dist
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: sensei-${{ runner.os }}
+          path: apps/copilot-desktop/release/
+          if-no-files-found: error
+          retention-days: 7
+
   mock-host:
     runs-on: ubuntu-latest
     timeout-minutes: 10

@@ -1,9 +1,9 @@
 import asyncio
-import hmac
 import json
 import logging
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 from pydantic import ValidationError
+from .clients import authenticate
 from .config import settings
 from .protocol import HelloMsg, ContextFrameMsg, FeedbackMsg, ProjectClosedMsg
 from .engine.suggest import build_suggestions
@@ -112,9 +112,9 @@ async def close_quietly(ws: WebSocket):
 TOKEN_PROTOCOL = "sensei.token."
 
 
-async def admit(ws: WebSocket) -> str | None:
-    # Checks the handshake before accepting it. Returns the subprotocol to echo ("" for none),
-    # or None after rejecting the connection (closing before accept -> HTTP 403).
+async def admit(ws: WebSocket, role: str) -> tuple[str, str] | None:
+    # Checks the handshake before accepting it. Returns (subprotocol to echo or "", client name or
+    # "" when auth is off), or None after rejecting the connection (closing before accept -> HTTP 403).
     # Browsers always send Origin, so this blocks other web pages.
     origin = ws.headers.get("origin")
     if origin is not None and origin not in settings.allowed_origins:
@@ -123,15 +123,18 @@ async def admit(ws: WebSocket) -> str | None:
         return None
 
     offered = [p for p in ws.scope.get("subprotocols", []) if p.startswith(TOKEN_PROTOCOL)]
-    if settings.token is not None:
-        presented = offered[0][len(TOKEN_PROTOCOL):] if offered else ""
-        if not hmac.compare_digest(presented.encode(), settings.token.encode()):
-            log.warning("rejected websocket without a valid token")
+    name = ""
+    if settings.clients is not None:
+        client = authenticate(settings.clients, offered[0][len(TOKEN_PROTOCOL):]) if offered else None
+        if client is None or role not in client.roles:
+            reason = "no valid token" if client is None else f"client {client.name!r} lacks the {role!r} role"
+            log.warning("rejected websocket on %s: %s", ws.url.path, reason)
             await ws.close(code=1008)
             return None
+        name = client.name
 
     # a browser drops the connection unless the subprotocol it offered is echoed back
-    return offered[0] if offered else ""
+    return (offered[0] if offered else ""), name
 
 
 def error(message: str) -> str:
@@ -142,7 +145,7 @@ def describe(err: ValidationError) -> str:
     return "; ".join(f"{'.'.join(map(str, e['loc']))}: {e['msg']}" for e in err.errors())
 
 
-async def serve(ws: WebSocket, reply, on_hello=None, on_frame=None, active=lambda: True):
+async def serve(ws: WebSocket, reply, on_hello=None, on_frame=None, active=lambda: True, client=""):
     # Bad input gets an error reply; the socket stays open. Stops as soon as active() turns false.
     while active():
         raw = await ws.receive_text()
@@ -172,7 +175,7 @@ async def serve(ws: WebSocket, reply, on_hello=None, on_frame=None, active=lambd
             elif msg_type == "feedback":
                 fb = FeedbackMsg.model_validate(data)
                 # accept feedback (store later)
-                log.info("feedback %r %s (project %r)", fb.suggestion_id, fb.verdict, fb.project_id)
+                log.info("feedback %r %s (project %r, client %r)", fb.suggestion_id, fb.verdict, fb.project_id, client or None)
                 await reply(json.dumps({"type": "ack_feedback", "ok": True}))
             else:
                 await reply(error("unknown msg type"))
@@ -187,9 +190,10 @@ def health():
 
 @app.websocket("/ws/host")
 async def ws_host(ws: WebSocket):
-    subprotocol = await admit(ws)
-    if subprotocol is None:
+    admitted = await admit(ws, "host")
+    if admitted is None:
         return
+    subprotocol, client = admitted
     await ws.accept(subprotocol=subprotocol or None)
 
     hello: HelloMsg | None = None
@@ -197,6 +201,7 @@ async def ws_host(ws: WebSocket):
     def on_hello(msg: HelloMsg):
         nonlocal hello
         previous, hello = hello, msg
+        log.info("project %r registered by host %r (client %r)", msg.project.id, msg.host.name, client or None)
         # register the new project before releasing the old one, so re-sending the same
         # project never closes it in between
         hub.open(msg.project.id)
@@ -214,7 +219,7 @@ async def ws_host(ws: WebSocket):
         await ws.send_text(suggestions)
 
     try:
-        await serve(ws, ws.send_text, on_hello, on_frame)
+        await serve(ws, ws.send_text, on_hello, on_frame, client=client)
     except WebSocketDisconnect:
         return
     finally:
@@ -224,9 +229,10 @@ async def ws_host(ws: WebSocket):
 
 @app.websocket("/ws/ui")
 async def ws_ui(ws: WebSocket):
-    subprotocol = await admit(ws)
-    if subprotocol is None:
+    admitted = await admit(ws, "ui")
+    if admitted is None:
         return
+    subprotocol, client = admitted
     # subscribed before the handshake completes, so nothing published meanwhile is missed
     ui = hub.subscribe(ws)
 
@@ -236,7 +242,7 @@ async def ws_ui(ws: WebSocket):
     try:
         await ws.accept(subprotocol=subprotocol or None)
         hub.start(ui)
-        await serve(ws, reply, active=lambda: not ui.dropped)
+        await serve(ws, reply, active=lambda: not ui.dropped, client=client)
         # Dropped (fell behind, or its socket failed). Our close may still be waiting for the socket
         # to drain, and Starlette refuses receive_text() once a close has begun, so read raw messages
         # (ignored) until the connection ends; uvicorn's keepalive still cuts a client that never reads.

@@ -57,13 +57,30 @@ npm install
 npm start
 ```
 
-### Optional: require a token
-Give the service, the hosts and the desktop UI the same `SENSEI_TOKEN` (letters, digits, `.`, `_`, `~`, `-`); clients without it are rejected.
+### Optional: require tokens
+Every client presents its token through `SENSEI_TOKEN` (the mock host and the Resolve adapter read it from the
+environment; Electron hands it to the UI). The service checks them in one of two modes.
+
+**One shared token.** Give the service and every client the same `SENSEI_TOKEN` (letters, digits, `.`, `_`, `~`, `-`).
 ```bash
 export SENSEI_TOKEN=$(openssl rand -hex 16)          # PowerShell: $env:SENSEI_TOKEN = [guid]::NewGuid().ToString("N")
 docker compose up --build                            # passes it to the service and the mock host
 cd apps/copilot-desktop && npm run dev               # Electron hands it to the UI
 ```
+
+**Per-client tokens.** Each client gets its own token and roles (`host` may stream frames, `ui` may follow
+suggestions), so a leaked host token can't read the suggestion stream and a client can be revoked on its own. The
+service stores only token hashes in `service/clients.json`.
+```bash
+cd service
+python -m sensei_service.clients --file clients.json add mock-host --role host    # prints its token once
+python -m sensei_service.clients --file clients.json add desktop --role ui
+cd ..
+SENSEI_MOCK_HOST_TOKEN=<mock-host token> docker compose -f docker-compose.yml -f docker-compose.clients.yml up --build
+cd apps/copilot-desktop && SENSEI_TOKEN=<desktop token> npm run dev
+```
+`remove <name>` revokes a client (restart the service to apply). Stop the stack with a plain `docker compose down`. Setting both `SENSEI_CLIENTS_FILE` and
+`SENSEI_TOKEN` for the service is refused, so auth can't be weakened by accident.
 Browser pages may only connect from the origins in `SENSEI_ALLOWED_ORIGINS` (default: the desktop UI) — see
 [`docs/PROTOCOL.md`](docs/PROTOCOL.md).
 

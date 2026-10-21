@@ -9,8 +9,11 @@
 - **Network exposure:** the service binds to loopback; Docker Compose publishes it on `127.0.0.1` only.
 - **Browser origins:** browsers don't apply the same-origin policy to WebSockets, so handshakes from browser
   origins outside `SENSEI_ALLOWED_ORIGINS` are rejected.
-- **Optional token:** with `SENSEI_TOKEN` set, every client must present it as a WebSocket subprotocol; it is
-  compared in constant time and never appears in URLs.
+- **Optional tokens:** one shared `SENSEI_TOKEN`, or per-client tokens from `SENSEI_CLIENTS_FILE`, where each client
+  has roles (`host` streams frames, `ui` follows suggestions) and can be revoked on its own. Clients present their
+  token as a WebSocket subprotocol, so it never appears in URLs; only SHA-256 hashes are stored, and every entry is
+  compared in constant time. Configuring both modes is refused rather than silently picking one. Connections and
+  feedback are logged with the client's name.
 - **Desktop renderer:** context isolation, no Node integration, sandbox; a Content-Security-Policy (no `eval`,
   WebSockets only to the service); popups and navigation away from the UI are blocked. The token reaches the page
   over IPC through a sandboxed preload, never through the bundle or a URL.
@@ -22,4 +25,5 @@
 - Suggested actions are not applied to hosts yet. Before they are: give actions ids, make "apply" idempotent with
   host-side guards, and limit params so an action cannot trigger destructive operations.
 - Feedback is logged, not stored; retention rules are needed once it is persisted.
-- The token is a shared secret from the environment; there is no per-user identity.
+- Tokens identify clients (an app or adapter), not people: there is no per-user login, and revoking a client takes
+  effect when the service restarts.

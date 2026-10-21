@@ -21,5 +21,5 @@
 
 ## v1.0
 - Commercial-grade host integrations
-- Robust permissions (per-user identity instead of a shared token)
+- Robust permissions (per-user identity on top of per-client tokens)
 - Template marketplace for looks / motion packs

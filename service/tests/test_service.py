@@ -4,7 +4,8 @@ import pytest
 from fastapi.testclient import TestClient
 from starlette.websockets import WebSocketDisconnect
 
-from sensei_service.config import Settings, settings
+from sensei_service.clients import Client, digest, shared_client
+from sensei_service.config import settings
 from sensei_service.engine.suggest import build_suggestions
 from sensei_service.main import UI_QUEUE_SIZE, Hub, app, hub, serve
 from sensei_service.protocol import ContextFrameMsg
@@ -168,8 +169,47 @@ def test_allowed_origin_is_accepted(client, path):
 
 @pytest.fixture
 def token(monkeypatch):
-    monkeypatch.setattr(settings, "token", "s3cret")
+    # the single shared-token mode (SENSEI_TOKEN)
+    monkeypatch.setattr(settings, "clients", [shared_client("s3cret")])
     return "s3cret"
+
+
+@pytest.fixture
+def per_client(monkeypatch):
+    # per-client mode (SENSEI_CLIENTS_FILE): a host-only and a UI-only client
+    tokens = {"resolve": "host-token", "desktop": "ui-token"}
+    monkeypatch.setattr(settings, "clients", [
+        Client("resolve", ("host",), digest(tokens["resolve"])),
+        Client("desktop", ("ui",), digest(tokens["desktop"])),
+    ])
+    return tokens
+
+
+@pytest.mark.parametrize("path, name, allowed", [
+    ("/ws/host", "resolve", True),
+    ("/ws/ui", "resolve", False),
+    ("/ws/ui", "desktop", True),
+    ("/ws/host", "desktop", False),
+])
+def test_clients_may_only_use_their_roles(client, per_client, path, name, allowed):
+    subprotocols = [f"sensei.token.{per_client[name]}"]
+    if allowed:
+        with client.websocket_connect(path, subprotocols=subprotocols) as ws:
+            ws.send_json({"type": "feedback", "suggestion_id": "sug_1234abcd", "verdict": "accepted"})
+            assert ws.receive_json() == {"type": "ack_feedback", "ok": True}
+    else:
+        with pytest.raises(WebSocketDisconnect) as exc:
+            with client.websocket_connect(path, subprotocols=subprotocols):
+                pass
+        assert exc.value.code == 1008
+
+
+@pytest.mark.parametrize("path", ["/ws/host", "/ws/ui"])
+def test_unknown_client_token_is_rejected(client, per_client, path):
+    with pytest.raises(WebSocketDisconnect) as exc:
+        with client.websocket_connect(path, subprotocols=["sensei.token.not-a-client"]):
+            pass
+    assert exc.value.code == 1008
 
 
 @pytest.mark.parametrize("path", ["/ws/host", "/ws/ui"])
@@ -191,11 +231,6 @@ def test_token_subprotocol_is_echoed_when_auth_is_off(client):
     # browsers drop the connection if an offered subprotocol is not echoed
     with client.websocket_connect("/ws/ui", subprotocols=["sensei.token.anything"]) as ui:
         assert ui.accepted_subprotocol == "sensei.token.anything"
-
-
-def test_token_must_be_subprotocol_safe():
-    with pytest.raises(ValueError):
-        Settings(allowed_origins=[], token="has space")
 
 
 class FakeWs:

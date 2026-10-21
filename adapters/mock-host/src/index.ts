@@ -5,7 +5,16 @@ const url = process.env.SENSEI_WS_URL ?? "ws://127.0.0.1:8000/ws/host";
 // optional shared secret, presented as a WebSocket subprotocol (see docs/PROTOCOL.md)
 const protocols = process.env.SENSEI_TOKEN ? [`sensei.token.${process.env.SENSEI_TOKEN}`] : [];
 
-type ApplyAction = { type: "apply_action"; action_id: string; suggestion_id: string; op: string; params: Record<string, unknown> };
+const PROJECT = { id: "p1", fps: 24 };
+
+type ApplyAction = {
+  type: "apply_action";
+  action_id: string;
+  project_id: string;
+  suggestion_id: string;
+  op: string;
+  params: Record<string, unknown>;
+};
 type ActionResult = { type: "action_result"; action_id: string; status: "applied" | "duplicate" | "rejected"; detail?: string };
 
 const SUPPORTED_OPS = new Set(["apply_color_grade", "apply_transition_at_cut", "snap_keyframe_to_time", "apply_vfx_preset"]);
@@ -16,6 +25,8 @@ const applied = new Set<string>();
 function applyAction(action: ApplyAction): ActionResult {
   const result = (status: ActionResult["status"], detail?: string): ActionResult =>
     ({ type: "action_result", action_id: action.action_id, status, detail });
+  // an action for another project would land on the wrong timeline
+  if (action.project_id !== PROJECT.id) return result("rejected", `this action is for ${action.project_id}, but ${PROJECT.id} is open`);
   if (applied.has(action.action_id)) return result("duplicate");
   if (!SUPPORTED_OPS.has(action.op)) return result("rejected", `unsupported op ${action.op}`);
   applied.add(action.action_id);
@@ -32,7 +43,7 @@ function connect() {
     ws.send(JSON.stringify({
       type: "hello",
       host: { name: "mock-host", version: "0.1" },
-      project: { id: "p1", fps: 24 }
+      project: PROJECT
     }));
 
     let playhead = 11.5;

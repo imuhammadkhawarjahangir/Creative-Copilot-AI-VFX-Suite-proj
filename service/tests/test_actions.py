@@ -59,6 +59,7 @@ def test_apply_reaches_the_host_and_the_result_reaches_the_ui(client):
         ui.send_json({"type": "apply", "project_id": "p", "suggestion_id": item["id"]})
         action = host.receive_json()
         assert action["type"] == "apply_action" and re.fullmatch(r"act_[0-9a-f]{12}", action["action_id"])
+        assert action["project_id"] == "p"  # so the host can refuse it if it has switched since
         assert (action["suggestion_id"], action["op"], action["params"]) == (item["id"], item["action"]["op"], item["action"]["params"])
 
         host.send_json({"type": "action_result", "action_id": action["action_id"], "status": "applied"})
@@ -211,6 +212,25 @@ def test_another_client_cannot_take_over_a_project(client, host_clients):
         # the intruder received no action (its next message is the error below) and can't report on it
         intruder.send_json({"type": "action_result", "action_id": action["action_id"], "status": "applied"})
         assert "send hello" in intruder.receive_json()["message"]
+
+
+def test_a_host_refused_another_project_no_longer_hosts_its_old_one(client, host_clients):
+    # its editor has left the old project, so that project's actions must not reach it
+    with client.websocket_connect("/ws/ui", subprotocols=host_clients["desktop"]) as ui, \
+            client.websocket_connect("/ws/host", subprotocols=host_clients["resolve"]) as owner, \
+            client.websocket_connect("/ws/host", subprotocols=host_clients["intruder"]) as switcher:
+        own = start(switcher, "q")
+        ui.receive_json()
+        start(owner, "p")
+        ui.receive_json()
+
+        switcher.send_json(hello("p"))
+        assert "held by another client" in switcher.receive_json()["message"]
+        assert ui.receive_json() == {"type": "project_closed", "project_id": "q"}
+        assert "q" not in hub.hosts and "q" not in hub.owners
+
+        ui.send_json({"type": "apply", "project_id": "q", "suggestion_id": item_of(own, "vfx")["id"]})
+        assert "no host is connected" in ui.receive_json()["detail"]
 
 
 def test_another_host_of_the_same_client_may_join(client, host_clients):

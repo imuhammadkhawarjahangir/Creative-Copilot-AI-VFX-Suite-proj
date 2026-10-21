@@ -136,9 +136,10 @@ class ApplyMsg(BaseModel):  # UI -> service: names a suggestion; the action come
     project_id: ProjectId
     suggestion_id: SuggestionId
 
-class ApplyActionMsg(BaseModel):  # service -> host
+class ApplyActionMsg(BaseModel):  # service -> host; a host rejects it unless project_id is what it has open
     type: Literal["apply_action"] = "apply_action"
     action_id: ActionId
+    project_id: ProjectId
     suggestion_id: SuggestionId
     op: str
     params: dict[str, Any]

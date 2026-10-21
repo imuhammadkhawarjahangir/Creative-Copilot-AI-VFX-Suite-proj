@@ -271,7 +271,11 @@ def apply_action(reader: Reader, action: dict, applied: set) -> dict:
     opened = reader.open_timeline()
     if opened is None:
         return result("rejected", "no timeline is open")
-    _, timeline, fps = opened
+    project, timeline, fps = opened
+    open_id = project_id(project, timeline)
+    if action.get("project_id") != open_id:
+        # sent for a timeline the editor has since left: carrying it out would edit the wrong one
+        return result("rejected", f"this action is for {action.get('project_id')}, but {open_id} is open")
     tag = MARKER_TAG + action_id
     if action_id in applied or timeline.GetMarkerByCustomData(tag):
         return result("duplicate")

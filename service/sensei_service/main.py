@@ -149,7 +149,8 @@ class Hub:
         # the same suggestion in the same project always gets the same id, so hosts can deduplicate
         action_id = "act_" + hashlib.sha256(f"{project_id}/{suggestion_id}".encode()).hexdigest()[:12]
         self.actions[action_id] = (project_id, suggestion_id, frozenset(hosts))
-        message = ApplyActionMsg(action_id=action_id, suggestion_id=suggestion_id, op=op, params=params).model_dump_json()
+        message = ApplyActionMsg(action_id=action_id, project_id=project_id, suggestion_id=suggestion_id,
+                                 op=op, params=params).model_dump_json()
         for host in hosts:
             self.spawn(host.send_text(message))
         return None
@@ -283,6 +284,10 @@ async def ws_host(ws: WebSocket):
             # register the new project before releasing the old one
             if not hub.open(msg.project.id, ws, client):
                 log.warning("refused project %r to client %r: another client's host holds it", msg.project.id, client or None)
+                if hello is not None:
+                    # the host has moved on from its old project either way: it must get none of its actions
+                    hub.close(hello.project.id, ws)
+                    hello = None
                 return f"project {msg.project.id!r} is held by another client"
             if hello is not None:
                 hub.close(hello.project.id, ws)

@@ -4,7 +4,7 @@ import pytest
 
 import resolve_adapter
 from fake_resolve import FakeMediaPoolItem, FakeProject, FakeResolve, FakeTimeline, FakeTimelineItem, scene_timeline
-from resolve_adapter import Reader, ResolveGone, apply_action, timecode_to_frame
+from resolve_adapter import Reader, ResolveGone, apply_action, project_id, timecode_to_frame
 from sensei_service.protocol import ActionResultMsg, ContextFrameMsg, HelloMsg
 
 
@@ -91,6 +91,9 @@ GRADE = {"action_id": "act_aaaaaaaaaaaa", "suggestion_id": "sug_00000001", "op":
 
 
 def apply(reader, action, applied=None):
+    opened = reader.open_timeline()
+    if opened is not None and "project_id" not in action:  # sent for the open timeline unless a test says otherwise
+        action = {**action, "project_id": project_id(*opened[:2])}
     result = apply_action(reader, action, set() if applied is None else applied)
     ActionResultMsg.model_validate(result)
     return result
@@ -147,6 +150,15 @@ def test_actions_that_cant_be_carried_out_are_rejected_untouched(change, detail)
     before = dict(timeline.markers)
     result = apply(reader_for(timeline), action)
     assert result["status"] == "rejected" and result["detail"].startswith(detail)
+    assert timeline.items[1].cdl is None and timeline.markers == before
+
+
+def test_an_action_for_another_timeline_is_rejected_untouched():
+    # the editor switched timelines after the suggestion was made: it must not land on this one
+    timeline = scene_timeline()
+    before = dict(timeline.markers)
+    result = apply(reader_for(timeline), {**GRADE, "project_id": "Night-Shoot.Edit-v2-abcdef"})
+    assert result["status"] == "rejected" and result["detail"].startswith("this action is for Night-Shoot.Edit-v2-abcdef")
     assert timeline.items[1].cdl is None and timeline.markers == before
 
 

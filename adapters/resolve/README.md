@@ -23,6 +23,8 @@ context to `/ws/host` while you work, and carries out the suggestions you apply 
 Resolve's scripting API has no calls to add transitions, keyframes or effects, so those suggestions become notes
 for the editor. Every action leaves a purple marker whose custom data is `sensei:<action id>`; an action already on
 the timeline is reported as `duplicate`, even after the adapter restarts. SENSEI's markers never count as beats.
+An action suggested for another timeline (you switched timelines after it was suggested) is `rejected`, so it never
+lands on the one now open.
 
 ## Setup
 1. Resolve runs scripts with the 64-bit Python installed on the machine. The adapter needs Python 3.9 or later and

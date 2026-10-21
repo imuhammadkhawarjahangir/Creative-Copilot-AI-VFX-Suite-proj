@@ -6,7 +6,7 @@ Transport: WebSocket JSON
 - `/ws/host` — editing hosts. Send `hello` first (it registers the host's project), then `context_frame` and `action_result`. Each `context_frame` is answered with `suggestions` on the same socket; a frame sent before `hello` gets an `error`. Hosts also receive `apply_action` (see *Applying a suggestion*).
 - `/ws/ui` — copilot UIs. No handshake: UIs don't register a project (a `hello` here is acknowledged and ignored). Send `apply` and `feedback`. On connect, receive the latest `suggestions` of every open project; then every `suggestions` message produced from any host's frames, and `project_closed` when the last host of a project disconnects, in that order. A UI that falls 256 messages behind is disconnected (close code 1013) rather than slowing everyone else down.
 
-Suggestions are scoped per project: each `suggestions` message carries the `project_id` and `host` name from that host's `hello`, so a UI can keep one stream per project. With per-client tokens, a project belongs to the client whose host opened it; a `hello` for it from another client's host gets an `error` (more hosts of the same client may join).
+Suggestions are scoped per project: each `suggestions` message carries the `project_id` and `host` name from that host's `hello`, so a UI can keep one stream per project. With per-client tokens, a project belongs to the client whose host opened it; a `hello` for it from another client's host gets an `error` (more hosts of the same client may join), and that host no longer hosts the project it had before, since its editor has left it.
 - `GET /health` — `{"ok": true}`
 
 WebSocket handshakes that carry a browser `Origin` not listed in `SENSEI_ALLOWED_ORIGINS` (comma-separated, default `http://127.0.0.1:5180,http://localhost:5180,sensei://app`: the desktop UI's dev server and its packaged origin) are rejected with HTTP 403. Native clients such as host adapters send no `Origin` and are accepted.
@@ -91,8 +91,8 @@ An action describes an edit. These are the only ops a host is ever asked to perf
 1. The UI names a suggestion; it never sends an action itself:
    `{ "type": "apply", "project_id": "p1", "suggestion_id": "sug_7bec91a2" }`
 2. The service looks the suggestion up in that project's latest suggestions, re-checks its action against the bounds above, and sends it to every host of the project:
-   `{ "type": "apply_action", "action_id": "act_3f1c09a2b4d7", "suggestion_id": "sug_7bec91a2", "op": "apply_color_grade", "params": { ... } }`
-   The `action_id` is derived from the project and suggestion, so applying the same suggestion again yields the same id; a host must apply an id at most once.
+   `{ "type": "apply_action", "action_id": "act_3f1c09a2b4d7", "project_id": "p1", "suggestion_id": "sug_7bec91a2", "op": "apply_color_grade", "params": { ... } }`
+   The `action_id` is derived from the project and suggestion, so applying the same suggestion again yields the same id; a host must apply an id at most once. A host must reject an action whose `project_id` isn't the project it has open: the editor may have switched since the suggestion was made, and the action would land on the wrong timeline.
 3. The host answers on its socket:
    `{ "type": "action_result", "action_id": "act_3f1c09a2b4d7", "status": "applied", "detail": null }`
    `status` is `applied`, `marked` (the host can't do it directly and left a marker for the editor), `duplicate` (already applied) or `rejected` (with a `detail`). Only a host connection the action was sent to can report its result.

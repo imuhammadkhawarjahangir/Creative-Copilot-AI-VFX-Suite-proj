@@ -94,39 +94,65 @@ def test_moving_the_playhead_or_switching_timelines_follows_the_editor(service_u
         assert next_message(ws, suggestions)["project_id"].startswith("Night-Shoot.Edit-v4-")
 
 
-def test_a_project_held_by_another_client_waits_its_turn(service_url, monkeypatch, capsys):
+@pytest.fixture
+def two_clients(service_url, monkeypatch):
+    # an edit bay (host and UI) and a laptop (host): each adapter's own client. Yields start(resolve, token).
     monkeypatch.setattr(resolve_adapter, "HELLO_RETRY_SECONDS", 0.5)
     monkeypatch.setattr(service.settings, "clients", [Client("edit-bay", ("host", "ui"), digest("bay")),
                                                       Client("laptop", ("host",), digest("laptop"))])
-    project = FakeProject("Night Shoot", scene_timeline())  # both adapters see the same project
     adapters = []
 
-    def start(token):
+    def start(app, token):
         stop = threading.Event()
-        thread = threading.Thread(target=resolve_adapter.run, args=(FakeResolve(project),), daemon=True,
+        thread = threading.Thread(target=resolve_adapter.run, args=(app,), daemon=True,
                                   kwargs={"url": f"{service_url}/ws/host", "token": token, "should_stop": stop.is_set})
         thread.start()
         adapters.append((stop, thread))
+        return stop, thread
 
-    try:
-        with connect(f"{service_url}/ws/ui", subprotocols=["sensei.token.bay"]) as ws:
-            start("bay")
-            project_id = next_message(ws, suggestions)["project_id"]
-            start("laptop")
-            while "is held by another client" not in capsys.readouterr().out:
-                time.sleep(0.05)
-            assert service.hub.owners[project_id] == "edit-bay"
+    yield start
+    for stop, thread in adapters:
+        stop.set()
+        thread.join(5)
 
-            stop, thread = adapters[0]  # the edit bay closes its adapter: the laptop takes over
-            stop.set()
-            thread.join(5)
-            assert next_message(ws, lambda m: m["type"] == "project_closed")["project_id"] == project_id
-            assert next_message(ws, suggestions)["project_id"] == project_id
-            assert service.hub.owners[project_id] == "laptop"
-    finally:
-        for stop, thread in adapters:
-            stop.set()
-            thread.join(5)
+
+def test_a_project_held_by_another_client_waits_its_turn(service_url, two_clients, capsys):
+    project = FakeProject("Night Shoot", scene_timeline())  # both adapters see the same project
+    with connect(f"{service_url}/ws/ui", subprotocols=["sensei.token.bay"]) as ws:
+        stop, thread = two_clients(FakeResolve(project), "bay")
+        project_id = next_message(ws, suggestions)["project_id"]
+        two_clients(FakeResolve(project), "laptop")
+        while "is held by another client" not in capsys.readouterr().out:
+            time.sleep(0.05)
+        assert service.hub.owners[project_id] == "edit-bay"
+
+        stop.set()  # the edit bay closes its adapter: the laptop takes over
+        thread.join(5)
+        assert next_message(ws, lambda m: m["type"] == "project_closed")["project_id"] == project_id
+        assert next_message(ws, suggestions)["project_id"] == project_id
+        assert service.hub.owners[project_id] == "laptop"
+
+
+def test_switching_to_a_project_another_client_holds_releases_the_old_one(service_url, two_clients, capsys):
+    # The laptop's editor opens the edit bay's project: the laptop is refused it, and its old project closes,
+    # so that project's suggestions can no longer be applied to whatever the laptop now has open.
+    shared = FakeProject("Night Shoot", scene_timeline())
+    laptop = FakeResolve(FakeProject("Laptop Cut", FakeTimeline("Rough", [FakeTimelineItem("C1", 86400, 86880)], playhead=24)))
+    with connect(f"{service_url}/ws/ui", subprotocols=["sensei.token.bay"]) as ws:
+        two_clients(FakeResolve(shared), "bay")
+        held = next_message(ws, suggestions)["project_id"]
+        two_clients(laptop, "laptop")
+        own = next_message(ws, lambda m: suggestions(m) and m["project_id"] != held)
+
+        laptop.manager.project = shared
+        assert next_message(ws, lambda m: m["type"] == "project_closed")["project_id"] == own["project_id"]
+        while "is held by another client" not in capsys.readouterr().out:
+            time.sleep(0.05)
+        assert own["project_id"] not in service.hub.hosts and service.hub.owners[held] == "edit-bay"
+
+        ws.send(json.dumps({"type": "apply", "project_id": own["project_id"], "suggestion_id": own["items"][0]["id"]}))
+        assert next_message(ws, outcome_of(own["items"][0]["id"]))["status"] == "failed"
+        assert all(item.cdl is None for item in shared.timeline.items)
 
 
 def test_the_adapter_stops_when_resolve_quits(resolve):

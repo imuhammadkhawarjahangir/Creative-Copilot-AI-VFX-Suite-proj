@@ -19,7 +19,8 @@ Requirements: Docker, Node 18+ (Python 3.11+ only to run the service without Doc
 ```bash
 docker compose up --build
 ```
-The service listens on `localhost:8000`; the mock host streams a synthetic timeline into it.
+The service listens on `127.0.0.1:8000` (loopback only); the mock host streams a synthetic timeline into it.
+Browser pages may only connect from the origins in `SENSEI_ALLOWED_ORIGINS` (default: the desktop UI's dev server) — see `docs/PROTOCOL.md`.
 
 ### 2) Start the desktop UI
 ```bash

@@ -7,6 +7,8 @@ Transport: WebSocket JSON
 - `/ws/ui` — copilot UIs. Send `hello`, `feedback`. Receive the latest `suggestions` on connect, then every `suggestions` message produced from any host's frames.
 - `GET /health` — `{"ok": true}`
 
+WebSocket handshakes that carry a browser `Origin` not listed in `SENSEI_ALLOWED_ORIGINS` (comma-separated, default `http://127.0.0.1:5180,http://localhost:5180`) are rejected with HTTP 403. Native clients such as host adapters send no `Origin` and are accepted.
+
 ## Host -> Service
 
 ### hello

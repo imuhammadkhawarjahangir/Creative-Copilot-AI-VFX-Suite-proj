@@ -2,6 +2,7 @@ import json
 import logging
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 from pydantic import ValidationError
+from .config import settings
 from .protocol import HelloMsg, ContextFrameMsg, FeedbackMsg
 from .engine.suggest import build_suggestions
 
@@ -26,6 +27,17 @@ class UiHub:
 
 
 hub = UiHub()
+
+
+async def accept(ws: WebSocket) -> bool:
+    # Browsers always send Origin, so this blocks other web pages (closing before accept -> HTTP 403).
+    origin = ws.headers.get("origin")
+    if origin is not None and origin not in settings.allowed_origins:
+        log.warning("rejected websocket from origin %s", origin)
+        await ws.close(code=1008)
+        return False
+    await ws.accept()
+    return True
 
 
 async def send_error(ws: WebSocket, message: str):
@@ -77,7 +89,8 @@ def health():
 
 @app.websocket("/ws/host")
 async def ws_host(ws: WebSocket):
-    await ws.accept()
+    if not await accept(ws):
+        return
 
     async def on_frame(ctx: ContextFrameMsg):
         suggestions = build_suggestions(ctx).model_dump_json()
@@ -92,7 +105,8 @@ async def ws_host(ws: WebSocket):
 
 @app.websocket("/ws/ui")
 async def ws_ui(ws: WebSocket):
-    await ws.accept()
+    if not await accept(ws):
+        return
     hub.clients.add(ws)
     try:
         if hub.latest:

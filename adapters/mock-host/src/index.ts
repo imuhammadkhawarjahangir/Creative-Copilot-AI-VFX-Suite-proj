@@ -1,7 +1,7 @@
 import WebSocket from "ws";
 import { makeFrame } from "./timeline.js";
 
-const url = process.env.SENSEI_WS_URL ?? "ws://localhost:8000/ws/host";
+const url = process.env.SENSEI_WS_URL ?? "ws://127.0.0.1:8000/ws/host";
 
 function connect() {
   const ws = new WebSocket(url);

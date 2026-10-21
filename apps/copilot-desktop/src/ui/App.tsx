@@ -10,7 +10,7 @@ type Suggestion = {
   action: { op: string; params: Record<string, any> };
 };
 
-const WS_URL = "ws://localhost:8000/ws/ui";
+const WS_URL = "ws://127.0.0.1:8000/ws/ui";
 
 export default function App() {
   const [items, setItems] = useState<Suggestion[]>([]);

@@ -1,4 +1,5 @@
 import { app, BrowserWindow, ipcMain, net, protocol, session } from "electron";
+import { spawn } from "child_process";
 import path from "path";
 import { fileURLToPath, pathToFileURL } from "url";
 
@@ -95,8 +96,36 @@ ipcMain.handle("sensei:config", (event) => {
   return { token: process.env.SENSEI_TOKEN || null, serviceUrl: SERVICE_URL };
 });
 
-app.whenReady().then(() => {
-  serveDist();
-  applyCspToDevServer();
-  createWindow();
-});
+// The Windows installer (Squirrel) runs the app with --squirrel-* while installing, updating and
+// uninstalling it: add or remove its shortcuts, then quit without opening a window. The launch right
+// after installing (--squirrel-firstrun) starts normally.
+const SQUIRREL_SHORTCUTS = new Map([
+  ["--squirrel-install", "--createShortcut"],
+  ["--squirrel-updated", "--createShortcut"],
+  ["--squirrel-uninstall", "--removeShortcut"],
+  ["--squirrel-obsolete", null]
+]);
+
+/** @returns {boolean} whether this launch is a Squirrel event (and the app is quitting) */
+function handleSquirrelEvent() {
+  const event = process.platform === "win32" ? process.argv[1] : undefined;
+  if (event === undefined || !SQUIRREL_SHORTCUTS.has(event)) return false;
+  const command = SQUIRREL_SHORTCUTS.get(event);
+  if (!command) {
+    app.quit();
+    return true;
+  }
+  const update = path.resolve(path.dirname(process.execPath), "..", "Update.exe");
+  spawn(update, [command, path.basename(process.execPath)], { detached: true })
+    .once("close", () => app.quit())
+    .once("error", () => app.quit());
+  return true;
+}
+
+if (!handleSquirrelEvent()) {
+  app.whenReady().then(() => {
+    serveDist();
+    applyCspToDevServer();
+    createWindow();
+  });
+}

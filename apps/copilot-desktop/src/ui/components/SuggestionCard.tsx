@@ -1,14 +1,23 @@
 import React from "react";
-import type { Suggestion, Verdict } from "../types";
+import type { ActionOutcome, Suggestion, Verdict } from "../types";
 
 type Props = {
   s: Suggestion;
   status: "idle" | Verdict;
+  outcomes: ActionOutcome[]; // the hosts' answers, one per host when the project has several
+  note?: string; // why the latest decision didn't go through
   disabled: boolean;
   onFeedback: (verdict: Verdict) => void;
 };
 
-export default function SuggestionCard({ s, status, disabled, onFeedback }: Props) {
+const OUTCOME_TEXT: Record<ActionOutcome["status"], string> = {
+  applied: "Applied in the host",
+  marked: "Marked in the host for a manual edit",
+  duplicate: "Already applied in the host",
+  rejected: "The host refused it"
+};
+
+export default function SuggestionCard({ s, status, outcomes, note, disabled, onFeedback }: Props) {
   return (
     <div style={{
       border: "1px solid rgba(0,0,0,0.12)",
@@ -35,6 +44,20 @@ export default function SuggestionCard({ s, status, disabled, onFeedback }: Prop
         </button>
         {status !== "idle" && <span style={{ opacity: 0.7 }}>✓ {status}</span>}
       </div>
+      {outcomes.length > 0 && (
+        <div style={{ marginTop: 8, fontSize: 12, opacity: 0.8 }}>
+          {outcomes.map((outcome, i) => (
+            <div key={i} className="outcome">
+              {OUTCOME_TEXT[outcome.status]}{outcome.detail ? `: ${outcome.detail}` : ""}
+            </div>
+          ))}
+        </div>
+      )}
+      {note && (
+        <div className="note" style={{ marginTop: 8, fontSize: 12, opacity: 0.8 }}>
+          {note}
+        </div>
+      )}
     </div>
   );
 }

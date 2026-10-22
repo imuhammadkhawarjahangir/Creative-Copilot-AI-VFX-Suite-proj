@@ -404,8 +404,10 @@ async def ws_ui(ws: WebSocket):
 
     async def on_feedback(data: dict):
         fb = FeedbackMsg.model_validate(data)
-        hub.withdraw(fb.project_id, fb.suggestion_id, client)  # this decision replaces an Apply still waiting
         problem = record_vote(client, fb.project_id, fb.suggestion_id, fb.verdict)
+        if problem is None:
+            # a recorded decision replaces an Apply still waiting; a refused one changes nothing at all
+            hub.withdraw(fb.project_id, fb.suggestion_id, client)
         await reply(FeedbackAckMsg(ok=problem is None, project_id=fb.project_id, suggestion_id=fb.suggestion_id,
                                    detail=problem).model_dump_json())
 

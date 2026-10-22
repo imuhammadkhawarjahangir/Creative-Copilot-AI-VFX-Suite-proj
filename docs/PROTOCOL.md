@@ -115,7 +115,7 @@ A grade or effect is for the shot it was suggested for, not whichever clip is un
   "project_id": "p1"
 }
 
-`verdict` is one of `accepted`, `rejected`, `modified`; `notes` is optional. Feedback trains the ranking, so it is only stored for a suggestion in its project's latest suggestions. Each client has one vote per project and suggestion: a later verdict replaces the earlier one, and applying a suggestion votes `accepted` when it is carried out (`ack_apply` with `"ok": true`). An apply that isn't carried out counts for nothing. Decisions count in the order they were made: if the client sends feedback on a suggestion while its Apply is still waiting for the hosts, that feedback stands, even if a host carries the Apply out afterwards.
+`verdict` is one of `accepted`, `rejected`, `modified`; `notes` is optional. Feedback trains the ranking, so it is only stored for a suggestion in its project's latest suggestions. Each client has one vote per project and suggestion: a later verdict replaces the earlier one, and applying a suggestion votes `accepted` when it is carried out (`ack_apply` with `"ok": true`). An apply that isn't carried out counts for nothing. Decisions count in the order they were made: if the client sends feedback on a suggestion while its Apply is still waiting for the hosts, and the feedback is recorded, that feedback stands, even if a host carries the Apply out afterwards. Feedback that isn't recorded (`"ok": false`) changes nothing.
 
 ## Service replies
 ### ack (to hello)

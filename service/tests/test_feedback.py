@@ -189,19 +189,28 @@ def test_an_apply_counts_once_and_only_when_a_host_confirms_it(client, monkeypat
     assert main.store.counts == {VFX_ARM: (1, 0)}  # confirmed twice, counted once
 
 
-@pytest.mark.parametrize("decided_again, counts", [(True, (0, 1)), (False, (1, 0))])
-def test_a_later_decision_replaces_an_apply_still_waiting(client, decided_again, counts):
+@pytest.mark.parametrize("later, counts", [
+    ("dismissed", (0, 1)),          # recorded: the dismissal is what counts
+    ("dismissal refused", (1, 0)),  # not recorded, and undone in that UI: it changes nothing, so the Apply counts
+    (None, (1, 0)),
+])
+def test_a_later_decision_replaces_an_apply_still_waiting(client, later, counts):
     # The client applies, then (from another window, say) dismisses before any host has answered. When a
-    # host carries the Apply out afterwards, the UI that applied hears so, but the dismissal is what counts.
+    # host carries the Apply out afterwards, the UI that applied hears so, but a recorded dismissal is what counts.
     with client.websocket_connect("/ws/ui") as ui, client.websocket_connect("/ws/ui") as other, \
             client.websocket_connect("/ws/host") as host:
         vfx = open_project(host, ui)
         other.receive_json()
         ui.send_json({"type": "apply", "project_id": "p", "suggestion_id": vfx["id"]})
         action = host.receive_json()
-        if decided_again:
+        if later == "dismissal refused":  # the scene changed: the neon bloom is no longer suggested
+            host.send_json({**FRAME, "scene": {**FRAME["scene"], "notes": ""}})
+            host.receive_json()
+            ui.receive_json()
+            other.receive_json()
+        if later is not None:
             other.send_json({"type": "feedback", "suggestion_id": vfx["id"], "verdict": "rejected", "project_id": "p"})
-            assert other.receive_json()["ok"] is True
+            assert other.receive_json()["ok"] is (later == "dismissed")
         host.send_json({"type": "action_result", "action_id": action["action_id"], "status": "applied"})
         assert ui.receive_json()["status"] == "applied"
         assert ui.receive_json()["ok"] is True

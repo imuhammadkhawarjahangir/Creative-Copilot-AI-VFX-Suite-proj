@@ -1,8 +1,8 @@
 export type Verdict = "accepted" | "rejected";
 
-// What became of an applied suggestion: the host's answer, or "failed" if the service couldn't reach one.
+// A host's answer to an applied suggestion (each host of the project answers; ack_apply gives the overall outcome).
 export type ActionOutcome = {
-  status: "applied" | "marked" | "duplicate" | "rejected" | "failed";
+  status: "applied" | "marked" | "duplicate" | "rejected";
   detail?: string | null;
 };
 

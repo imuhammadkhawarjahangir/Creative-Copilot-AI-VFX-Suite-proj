@@ -105,7 +105,8 @@ def test_apply_failures_are_reported_to_the_ui(client, with_host, suggestion_id,
         else:
             ui.send_json({"type": "apply", "project_id": "p", "suggestion_id": suggestion_id})
             outcome = ui.receive_json()
-    assert outcome["type"] == "action_result" and outcome["status"] == "failed" and detail in outcome["detail"]
+    assert outcome["type"] == "ack_apply" and outcome["ok"] is False and detail in outcome["detail"]
+    assert (outcome["project_id"], outcome["suggestion_id"]) == ("p", suggestion_id)
 
 
 def test_messages_are_only_accepted_on_their_endpoint(client):
@@ -153,6 +154,7 @@ def test_a_host_answers_each_send_once(client):
 
         report("applied")
         assert ui.receive_json()["status"] == "applied"
+        assert ui.receive_json()["type"] == "ack_apply"
         report("duplicate")
         assert "no result is expected" in host.receive_json()["message"]
 
@@ -162,7 +164,75 @@ def test_a_host_answers_each_send_once(client):
         assert ui.receive_json()["status"] == "duplicate"
 
 
-def test_closing_a_project_forgets_its_actions(client):
+def apply_on_two_hosts(ui, a, b) -> dict:
+    # Hosts a and b both have project "p" open, and the UI applies its vfx suggestion. Returns the action.
+    suggestions = start(a)
+    ui.receive_json()
+    b.send_json(hello("p"))
+    assert b.receive_json() == ACK
+    ui.send_json({"type": "apply", "project_id": "p", "suggestion_id": item_of(suggestions, "vfx")["id"]})
+    action = a.receive_json()
+    assert b.receive_json() == action
+    return action
+
+
+def result(action, status, detail=None):
+    return {"type": "action_result", "action_id": action["action_id"], "status": status, "detail": detail}
+
+
+def test_every_apply_gets_one_answer(client):
+    # also when the same UI applies again before the host has answered the first
+    with client.websocket_connect("/ws/ui") as ui, client.websocket_connect("/ws/host") as host:
+        suggestions = start(host)
+        ui.receive_json()
+        apply = {"type": "apply", "project_id": "p", "suggestion_id": item_of(suggestions, "vfx")["id"]}
+        for _ in range(2):
+            ui.send_json(apply)
+            action = host.receive_json()
+        host.send_json(result(action, "applied"))
+        assert ui.receive_json()["type"] == "action_result"
+        assert [ui.receive_json()["type"] for _ in range(2)] == ["ack_apply", "ack_apply"]
+        host.send_json(result(action, "duplicate"))  # the second send's answer: nothing more is waiting
+        assert ui.receive_json()["status"] == "duplicate"
+
+
+def test_with_two_hosts_one_carrying_it_out_is_enough(client):
+    with client.websocket_connect("/ws/ui") as ui, client.websocket_connect("/ws/host") as a, \
+            client.websocket_connect("/ws/host") as b:
+        action = apply_on_two_hosts(ui, a, b)
+        a.send_json(result(action, "rejected", "no clip at the cut"))
+        assert ui.receive_json()["status"] == "rejected"  # shown, but not the outcome: b still owes an answer
+        b.send_json(result(action, "applied"))
+        assert ui.receive_json()["status"] == "applied"
+        assert ui.receive_json() == {"type": "ack_apply", "ok": True, "project_id": "p",
+                                     "suggestion_id": action["suggestion_id"], "detail": None}
+
+
+def test_with_two_hosts_it_comes_to_nothing_only_when_both_refuse(client):
+    with client.websocket_connect("/ws/ui") as ui, client.websocket_connect("/ws/host") as a, \
+            client.websocket_connect("/ws/host") as b:
+        action = apply_on_two_hosts(ui, a, b)
+        a.send_json(result(action, "rejected", "no clip at the cut"))
+        assert ui.receive_json()["status"] == "rejected"
+        b.send_json(result(action, "rejected", "the timeline is locked"))
+        assert ui.receive_json()["status"] == "rejected"
+        ack = ui.receive_json()
+        assert ack["type"] == "ack_apply" and ack["ok"] is False and ack["detail"] == "the timeline is locked"
+
+
+def test_a_host_leaving_before_it_answers_settles_the_apply(client):
+    # its answer will never come: once nothing else is owed, the Apply came to nothing
+    with client.websocket_connect("/ws/ui") as ui, client.websocket_connect("/ws/host") as a:
+        with client.websocket_connect("/ws/host") as b:
+            action = apply_on_two_hosts(ui, a, b)
+            a.send_json(result(action, "rejected"))
+            assert ui.receive_json()["status"] == "rejected"
+        assert ui.receive_json() == {"type": "ack_apply", "ok": False, "project_id": "p",
+                                     "suggestion_id": action["suggestion_id"],
+                                     "detail": "the host left the project before answering"}
+
+
+def test_closing_a_project_settles_and_forgets_its_actions(client):
     with client.websocket_connect("/ws/ui") as ui:
         with client.websocket_connect("/ws/host") as host:
             suggestions = start(host)
@@ -170,6 +240,8 @@ def test_closing_a_project_forgets_its_actions(client):
             ui.send_json({"type": "apply", "project_id": "p", "suggestion_id": item_of(suggestions, "vfx")["id"]})
             host.receive_json()
             assert len(hub.actions) == 1
+        ack = ui.receive_json()
+        assert ack["type"] == "ack_apply" and ack["ok"] is False and "left the project" in ack["detail"]
         assert ui.receive_json()["type"] == "project_closed"
     assert hub.actions == {}
 
@@ -213,8 +285,7 @@ def test_the_hub_rechecks_bounds_before_sending():
     local.latest["p"] = ('{"type": "suggestions", "ts": 1, "project_id": "p", "host": "t", "items": [{"id": "sug_1234abcd", '
                          '"kind": "vfx", "title": "t", "confidence": 0.5, "rationale": "r", "action": {"op": "apply_vfx_preset", '
                          '"params": {"preset": "x", "threshold": 9, "intensity": 0.1, "radius": 0.1}}}]}')
-    outcome = local.apply("p", "sug_1234abcd")
-    assert outcome is not None and '"status":"failed"' in outcome and "bounds" in outcome
+    assert local.apply("p", "sug_1234abcd") == "the action is outside the allowed bounds"
     assert host.sent == [] and local.actions == {}
 
 

@@ -155,11 +155,15 @@ def test_an_apply_counts_once_and_only_when_a_host_confirms_it(client, monkeypat
         vfx = open_project(host, ui)
         apply = {"type": "apply", "project_id": "p", "suggestion_id": vfx["id"]}
 
-        def answer(status):
+        def answer(status) -> bool:
+            # applies, has the host answer with `status`; returns what the UI's ack_apply said
             ui.send_json(apply)
             action = host.receive_json()
             host.send_json({"type": "action_result", "action_id": action["action_id"], "status": status})
             assert ui.receive_json()["status"] == status
+            ack = ui.receive_json()
+            assert ack["type"] == "ack_apply"
+            return ack["ok"]
 
         def out_of_bounds(op, params):
             raise ValueError(op)
@@ -167,10 +171,10 @@ def test_an_apply_counts_once_and_only_when_a_host_confirms_it(client, monkeypat
         with monkeypatch.context() as patch:
             patch.setattr(main, "checked_params", out_of_bounds)
             ui.send_json(apply)
-            assert ui.receive_json()["status"] == "failed"
+            assert ui.receive_json()["ok"] is False
         assert main.store.counts == {}  # never sent
 
-        answer("rejected")
+        assert answer("rejected") is False
         assert main.store.counts == {}  # sent, but the host didn't carry it out
 
         ui.send_json(apply)
@@ -178,7 +182,27 @@ def test_an_apply_counts_once_and_only_when_a_host_confirms_it(client, monkeypat
         assert main.store.counts == {}  # sent, and not answered yet
         host.send_json({"type": "action_result", "action_id": action["action_id"], "status": "applied"})
         assert ui.receive_json()["status"] == "applied"
+        assert ui.receive_json()["ok"] is True
         assert main.store.counts == {VFX_ARM: (1, 0)}
 
-        answer("duplicate")
+        assert answer("duplicate") is True
     assert main.store.counts == {VFX_ARM: (1, 0)}  # confirmed twice, counted once
+
+
+@pytest.mark.parametrize("decided_again, counts", [(True, (0, 1)), (False, (1, 0))])
+def test_a_later_decision_replaces_an_apply_still_waiting(client, decided_again, counts):
+    # The client applies, then (from another window, say) dismisses before any host has answered. When a
+    # host carries the Apply out afterwards, the UI that applied hears so, but the dismissal is what counts.
+    with client.websocket_connect("/ws/ui") as ui, client.websocket_connect("/ws/ui") as other, \
+            client.websocket_connect("/ws/host") as host:
+        vfx = open_project(host, ui)
+        other.receive_json()
+        ui.send_json({"type": "apply", "project_id": "p", "suggestion_id": vfx["id"]})
+        action = host.receive_json()
+        if decided_again:
+            other.send_json({"type": "feedback", "suggestion_id": vfx["id"], "verdict": "rejected", "project_id": "p"})
+            assert other.receive_json()["ok"] is True
+        host.send_json({"type": "action_result", "action_id": action["action_id"], "status": "applied"})
+        assert ui.receive_json()["status"] == "applied"
+        assert ui.receive_json()["ok"] is True
+    assert main.store.counts == {VFX_ARM: counts}

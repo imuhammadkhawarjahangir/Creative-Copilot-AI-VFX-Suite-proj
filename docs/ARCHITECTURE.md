@@ -28,7 +28,8 @@
 3. Copilot Desktop (Electron + React, `apps/copilot-desktop/`)
    - Shows one live suggestion stream per project
    - Apply sends the suggestion to the host through the service and shows the host's answer; Dismiss sends feedback.
-     A decision that didn't take effect (the suggestion changed meanwhile, or the host refused it) is undone, and the card says why
+     A decision that didn't take effect (the suggestion changed meanwhile, or no host carried it out) is undone, and the card says why;
+     the service tells the UI, since only it knows when every host has answered
    - Sandboxed renderer; the packaged UI is served over a privileged `sensei://` scheme
 
 ## Data flow

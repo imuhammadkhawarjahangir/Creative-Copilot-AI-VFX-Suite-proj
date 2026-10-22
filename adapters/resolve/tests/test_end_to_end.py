@@ -151,7 +151,8 @@ def test_switching_to_a_project_another_client_holds_releases_the_old_one(servic
         assert own["project_id"] not in service.hub.hosts and service.hub.owners[held] == "edit-bay"
 
         ws.send(json.dumps({"type": "apply", "project_id": own["project_id"], "suggestion_id": own["items"][0]["id"]}))
-        assert next_message(ws, outcome_of(own["items"][0]["id"]))["status"] == "failed"
+        ack = next_message(ws, lambda m: m["type"] == "ack_apply")
+        assert ack["suggestion_id"] == own["items"][0]["id"] and ack["ok"] is False
         assert all(item.cdl is None for item in shared.timeline.items)
 
 

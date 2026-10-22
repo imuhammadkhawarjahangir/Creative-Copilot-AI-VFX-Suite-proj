@@ -152,10 +152,17 @@ class ActionResultMsg(BaseModel):  # host -> service
     status: Literal["applied", "marked", "duplicate", "rejected"]
     detail: Optional[Annotated[str, StringConstraints(pattern=r"^[^\x00-\x1f\x7f]{0,200}$")]] = None  # shown on every UI
 
-class ActionOutcomeMsg(BaseModel):  # service -> UI; "failed" means the service never reached a host
+class ActionOutcomeMsg(BaseModel):  # service -> UI: one host's result, forwarded to every UI
     type: Literal["action_result"] = "action_result"
     project_id: str
     suggestion_id: str
-    action_id: Optional[str] = None
-    status: Literal["applied", "marked", "duplicate", "rejected", "failed"]
+    action_id: str
+    status: Literal["applied", "marked", "duplicate", "rejected"]
+    detail: Optional[str] = None
+
+class ApplyAckMsg(BaseModel):  # service -> the UI that applied: the outcome of its Apply, once known
+    type: Literal["ack_apply"] = "ack_apply"
+    ok: bool  # a host carried it out (and the Apply counts), or none did: then `detail` says why
+    project_id: str
+    suggestion_id: str
     detail: Optional[str] = None

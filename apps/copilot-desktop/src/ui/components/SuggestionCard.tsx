@@ -4,8 +4,8 @@ import type { ActionOutcome, Suggestion, Verdict } from "../types";
 type Props = {
   s: Suggestion;
   status: "idle" | Verdict;
-  outcome?: ActionOutcome;
-  refused?: string; // why the service didn't record a Dismiss
+  outcomes: ActionOutcome[]; // the hosts' answers, one per host when the project has several
+  note?: string; // why the latest decision didn't go through
   disabled: boolean;
   onFeedback: (verdict: Verdict) => void;
 };
@@ -14,11 +14,10 @@ const OUTCOME_TEXT: Record<ActionOutcome["status"], string> = {
   applied: "Applied in the host",
   marked: "Marked in the host for a manual edit",
   duplicate: "Already applied in the host",
-  rejected: "The host refused it",
-  failed: "Couldn't apply"
+  rejected: "The host refused it"
 };
 
-export default function SuggestionCard({ s, status, outcome, refused, disabled, onFeedback }: Props) {
+export default function SuggestionCard({ s, status, outcomes, note, disabled, onFeedback }: Props) {
   return (
     <div style={{
       border: "1px solid rgba(0,0,0,0.12)",
@@ -45,14 +44,18 @@ export default function SuggestionCard({ s, status, outcome, refused, disabled, 
         </button>
         {status !== "idle" && <span style={{ opacity: 0.7 }}>✓ {status}</span>}
       </div>
-      {outcome && (
-        <div className="outcome" style={{ marginTop: 8, fontSize: 12, opacity: 0.8 }}>
-          {OUTCOME_TEXT[outcome.status]}{outcome.detail ? `: ${outcome.detail}` : ""}
+      {outcomes.length > 0 && (
+        <div style={{ marginTop: 8, fontSize: 12, opacity: 0.8 }}>
+          {outcomes.map((outcome, i) => (
+            <div key={i} className="outcome">
+              {OUTCOME_TEXT[outcome.status]}{outcome.detail ? `: ${outcome.detail}` : ""}
+            </div>
+          ))}
         </div>
       )}
-      {refused && (
-        <div className="refused" style={{ marginTop: 8, fontSize: 12, opacity: 0.8 }}>
-          Dismiss wasn't recorded: {refused}
+      {note && (
+        <div className="note" style={{ marginTop: 8, fontSize: 12, opacity: 0.8 }}>
+          {note}
         </div>
       )}
     </div>

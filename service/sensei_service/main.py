@@ -9,7 +9,7 @@ from pydantic import ValidationError
 from .clients import authenticate
 from .config import settings
 from .feedback import FeedbackStore, arm_of
-from .protocol import (ActionOutcomeMsg, ActionResultMsg, ApplyActionMsg, ApplyMsg, ContextFrameMsg,
+from .protocol import (ActionOutcomeMsg, ActionResultMsg, ApplyAckMsg, ApplyActionMsg, ApplyMsg, ContextFrameMsg,
                        FeedbackAckMsg, FeedbackMsg, HelloMsg, ProjectClosedMsg, checked_params)
 from .engine.suggest import build_suggestions
 
@@ -30,13 +30,20 @@ class UiClient:
         self.dropped = False  # set once; nothing is queued for this UI after that
 
 
+def action_id_of(project_id: str, suggestion_id: str) -> str:
+    # the same suggestion in the same project always gets the same id, so hosts can deduplicate
+    return "act_" + hashlib.sha256(f"{project_id}/{suggestion_id}".encode()).hexdigest()[:12]
+
+
 @dataclass
 class Sent:
-    # An action sent to a project's hosts: the results still owed, and whose Apply it answers.
+    # An action sent to a project's hosts: the results they still owe, and the Applies waiting for its outcome.
     project_id: str
     item: dict  # the suggestion as it was applied
     awaited: Counter = field(default_factory=Counter)  # host socket -> results it still owes (one per send)
-    appliers: set[str] = field(default_factory=set)     # clients whose Apply counts once a host confirms it
+    # one entry per Apply waiting for the outcome: the UI that sent it, and its client, whose Apply counts
+    # once a host carries it out; None once that client has decided otherwise (its later decision stands)
+    waiting: list[tuple[UiClient, str | None]] = field(default_factory=list)
 
 
 class Hub:
@@ -123,6 +130,10 @@ class Hub:
         if hosts is None:
             return
         hosts.discard(host)
+        # results this host still owed for the project will never come: an Apply waiting only on them came to nothing
+        for sent in self.actions.values():
+            if sent.project_id == project_id and sent.awaited.pop(host, 0) and sum(sent.awaited.values()) == 0:
+                self.answer(sent, False, "the host left the project before answering")
         if hosts:
             return
         del self.hosts[project_id]
@@ -137,39 +148,54 @@ class Hub:
             return None
         return next((i for i in json.loads(self.latest[project_id])["items"] if i["id"] == suggestion_id), None)
 
-    def apply(self, project_id: str, suggestion_id: str, client: str = "") -> str | None:
-        # Sends a current suggestion's action to the project's hosts, for `client`'s UI. The UI only
-        # names the suggestion: the action comes from what the service produced, re-checked against
-        # the per-op bounds. Returns a "failed" outcome for the UI, or None once sent.
-        def failed(detail: str) -> str:
-            return ActionOutcomeMsg(project_id=project_id, suggestion_id=suggestion_id,
-                                    status="failed", detail=detail).model_dump_json()
-
+    def apply(self, project_id: str, suggestion_id: str, ui: UiClient | None = None, client: str = "") -> str | None:
+        # Sends a current suggestion's action to the project's hosts for `ui`, a UI of `client`. The UI
+        # only names the suggestion: the action comes from what the service produced, re-checked against
+        # the per-op bounds. Returns why it couldn't be sent, or None: `ui` then hears the outcome from answer().
         hosts = self.hosts.get(project_id)
         if not hosts:
-            return failed("no host is connected for this project")
+            return "no host is connected for this project"
         item = self.find(project_id, suggestion_id)
         if item is None:
-            return failed("this suggestion is no longer current")
+            return "this suggestion is no longer current"
         op = item["action"]["op"]
         try:
             params = checked_params(op, item["action"]["params"])
         except ValueError:
-            return failed("the action is outside the allowed bounds")
-        # the same suggestion in the same project always gets the same id, so hosts can deduplicate
-        action_id = "act_" + hashlib.sha256(f"{project_id}/{suggestion_id}".encode()).hexdigest()[:12]
+            return "the action is outside the allowed bounds"
+        action_id = action_id_of(project_id, suggestion_id)
         sent = self.actions.setdefault(action_id, Sent(project_id, item))
         sent.awaited.update(hosts)
-        sent.appliers.add(client)
+        if ui is not None:
+            sent.waiting.append((ui, client))
         message = ApplyActionMsg(action_id=action_id, project_id=project_id, suggestion_id=suggestion_id,
                                  op=op, params=params).model_dump_json()
         for host in hosts:
             self.spawn(host.send_text(message))
         return None
 
+    def answer(self, sent: Sent, ok: bool, detail: str | None = None) -> list[str]:
+        # Tells each UI waiting on the action whether its Apply was carried out (ok: by at least one host).
+        # Returns the clients whose Apply now counts as accepted: none unless ok, and none that decided otherwise since.
+        if not sent.waiting:
+            return []
+        message = ApplyAckMsg(ok=ok, project_id=sent.project_id, suggestion_id=sent.item["id"], detail=detail).model_dump_json()
+        counted = sorted({client for _, client in sent.waiting if client is not None}) if ok else []
+        for ui, _ in sent.waiting:
+            self.send(ui, message)
+        sent.waiting.clear()
+        return counted
+
+    def withdraw(self, project_id: str, suggestion_id: str, client: str):
+        # The client decided again while its Apply was still waiting for a host: if a host carries the Apply
+        # out afterwards, its UI still hears so, but the later decision is the one that counts.
+        sent = self.actions.get(action_id_of(project_id, suggestion_id))
+        if sent is not None:
+            sent.waiting = [(ui, None if applier == client else applier) for ui, applier in sent.waiting]
+
     def report(self, host: WebSocket, result: ActionResultMsg) -> Sent | None:
-        # Forwards a host's result to every UI: one result each time the action was sent to that host,
-        # whichever project the host has open now. Returns the action, or None if no result was owed.
+        # Forwards a host's result to every UI: one result each time the action was sent to that host while
+        # it hosted the project. Returns the action, or None if no result was owed.
         sent = self.actions.get(result.action_id)
         if sent is None or sent.awaited[host] <= 0:
             return None
@@ -197,18 +223,18 @@ def record_vote(client: str, project_id: str, suggestion_id: str, verdict: str) 
 CONFIRMED = {"applied", "marked", "duplicate"}  # the host carried the action out, or already had
 
 
-def settle(sent: Sent, status: str):
-    # Applying is accepting, counted once a host confirms it: an action that was refused, or never
-    # answered, teaches nothing. The appliers are forgotten once every host has answered without confirming.
+def settle(sent: Sent, result: ActionResultMsg):
+    # The outcome of the Applies waiting on an action, decided here and only here: carried out as soon as
+    # one host confirms it (and then applying counts as accepting), not carried out once every host it was
+    # sent to has answered without confirming. A refused action teaches nothing.
     item = sent.item
-    if status in CONFIRMED:
-        for client in sent.appliers:
+    if result.status in CONFIRMED:
+        for client in hub.answer(sent, True):
             store.vote(client, sent.project_id, item["id"],
                        arm_of(item["kind"], item["action"]["op"], item["action"]["params"]), "accepted")
             log.info("feedback %r accepted (applied; project %r, client %r)", item["id"], sent.project_id, client or None)
-        sent.appliers.clear()
     elif sum(sent.awaited.values()) == 0:
-        sent.appliers.clear()
+        hub.answer(sent, False, result.detail or "the host refused it")
 
 
 async def close_quietly(ws: WebSocket):
@@ -339,12 +365,11 @@ async def ws_host(ws: WebSocket):
 
     async def on_result(data: dict):
         result = ActionResultMsg.model_validate(data)
-        # matched against what this socket was sent, so a result still counts after the host switched project
         sent = hub.report(ws, result)
         if sent is None:
             await ws.send_text(error("no result is expected from this host for that action_id"))
             return
-        settle(sent, result.status)
+        settle(sent, result)
         log.info("action %s %s for project %r (client %r)", result.action_id, result.status, sent.project_id, client or None)
 
     try:
@@ -371,13 +396,15 @@ async def ws_ui(ws: WebSocket):
     async def on_apply(data: dict):
         request = ApplyMsg.model_validate(data)
         log.info("apply %r requested for project %r (client %r)", request.suggestion_id, request.project_id, client or None)
-        # applying is accepting, counted once a host confirms it (settle); applying again keeps one vote
-        outcome = hub.apply(request.project_id, request.suggestion_id, client)
-        if outcome is not None:
-            await reply(outcome)
+        # answered with exactly one ack_apply: now if it can't be sent, else once its outcome is known (settle)
+        problem = hub.apply(request.project_id, request.suggestion_id, ui, client)
+        if problem is not None:
+            await reply(ApplyAckMsg(ok=False, project_id=request.project_id, suggestion_id=request.suggestion_id,
+                                    detail=problem).model_dump_json())
 
     async def on_feedback(data: dict):
         fb = FeedbackMsg.model_validate(data)
+        hub.withdraw(fb.project_id, fb.suggestion_id, client)  # this decision replaces an Apply still waiting
         problem = record_vote(client, fb.project_id, fb.suggestion_id, fb.verdict)
         await reply(FeedbackAckMsg(ok=problem is None, project_id=fb.project_id, suggestion_id=fb.suggestion_id,
                                    detail=problem).model_dump_json())

@@ -1,4 +1,4 @@
-import { app, BrowserWindow, ipcMain, net, protocol, session } from "electron";
+import { app, BrowserWindow, ipcMain, nativeTheme, net, protocol, session } from "electron";
 import { spawn } from "child_process";
 import path from "path";
 import { fileURLToPath, pathToFileURL } from "url";
@@ -63,6 +63,10 @@ function createWindow() {
   const win = new BrowserWindow({
     width: 980,
     height: 720,
+    minWidth: 380, // the cards stack in one column down to this width
+    minHeight: 360,
+    // the page's own background (src/ui/styles.css), so the window doesn't flash white before it loads
+    backgroundColor: nativeTheme.shouldUseDarkColors ? "#1e1f23" : "#eceef1",
     webPreferences: {
       preload: path.join(__dirname, "preload.cjs"),
       contextIsolation: true,

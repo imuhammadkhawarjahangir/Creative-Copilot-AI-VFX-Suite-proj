@@ -22,4 +22,6 @@ export type Suggestion = {
   confidence: number;
   rationale: string;
   action: { op: string; params: Record<string, unknown> };
+  // how the user's decisions on this kind of suggestion moved `confidence` from the rule's own `prior`
+  adjusted?: { prior: number; applied: number; dismissed: number } | null;
 };

@@ -35,7 +35,9 @@ def test_dismissals_lower_a_suggestion_type_and_rerank_it():
         store.vote("", "p", f"sug_0000000{n}", VFX_ARM, "rejected")
     vfx = suggestions(store)["vfx"]
     assert vfx.confidence == round((0.74 * PRIOR_STRENGTH + 0) / (PRIOR_STRENGTH + 4), 2)  # 0.41
-    assert "0 applied, 4 dismissed" in vfx.rationale
+    # what moved it, as data the UI can show; the rationale stays the rule's own
+    assert vfx.adjusted.model_dump() == {"prior": 0.74, "applied": 0, "dismissed": 4}
+    assert vfx.rationale == "Neon signage benefits from controlled bloom to sell intensity without clipping."
 
     ranked = [i.kind for i in build_suggestions(ContextFrameMsg.model_validate(FRAME), store.adjust).items]
     assert ranked[-1] == "vfx"  # was second, now below everything else
@@ -127,7 +129,8 @@ def test_feedback_over_the_wire_changes_later_suggestions(client):
         later = next(i for i in host.receive_json()["items"] if i["kind"] == "vfx")
         assert later["id"] == vfx["id"]  # same suggestion...
         assert later["confidence"] < vfx["confidence"]  # ...less confident, by one vote however often it's sent
-        assert "0 applied, 1 dismissed" in later["rationale"]
+        assert later["adjusted"] == {"prior": 0.74, "applied": 0, "dismissed": 1}
+        assert vfx["adjusted"] is None  # nothing learned before the first dismissal
 
 
 def test_hosts_cannot_send_feedback(client):

@@ -67,6 +67,11 @@ class Action(BaseModel):
     op: str
     params: dict[str, Any] = {}
 
+class Adjustment(BaseModel):  # how the user's stored decisions moved a suggestion's confidence
+    prior: float  # the rule's own confidence
+    applied: int
+    dismissed: int
+
 class SuggestionItem(BaseModel):
     id: str
     kind: Literal["color_grade", "transition", "keyframe", "vfx"]
@@ -74,6 +79,7 @@ class SuggestionItem(BaseModel):
     confidence: float
     rationale: str
     action: Action
+    adjusted: Optional[Adjustment] = None  # None while there is no feedback on this kind of suggestion
 
 class SuggestionsMsg(BaseModel):
     type: Literal["suggestions"] = "suggestions"

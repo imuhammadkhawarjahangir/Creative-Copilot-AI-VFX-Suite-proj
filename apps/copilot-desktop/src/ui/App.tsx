@@ -1,7 +1,7 @@
 import React, { useEffect, useRef, useState } from "react";
 import SuggestionCard, { type Stage } from "./components/SuggestionCard";
-import { hostName } from "./describe";
-import type { ActionOutcome, Suggestion, Verdict } from "./types";
+import { CARRIED_OUT_TEXT, hostName } from "./describe";
+import type { ActionOutcome, CarriedOut, Suggestion, Verdict } from "./types";
 
 type ProjectStream = { host: string; items: Suggestion[] };
 type Connection = "connecting" | "connected" | "unreachable";
@@ -27,6 +27,13 @@ export default function App() {
   const [outcomes, setOutcomes] = useState<Record<string, ActionOutcome[]>>({});
   // why the latest decision didn't go through, by the same key
   const [notes, setNotes] = useState<Record<string, string>>({});
+  // how each Apply of this UI went through, once the service said so (ack_apply's status), by the same key
+  const [carriedOut, setCarriedOut] = useState<Record<string, CarriedOut>>({});
+  // The one place this UI announces to screen readers: how its own decisions turned out. The cards show their
+  // status without announcing it, so a reconnect that redraws every card stays quiet.
+  const [announcement, setAnnouncement] = useState("");
+  // titles of the suggestions decided on, by key, for those announcements (a suggestion may have gone by then)
+  const titlesRef = useRef(new Map<string, string>());
   const [connection, setConnection] = useState<Connection>("connecting");
   const [serviceUrl, setServiceUrl] = useState(DEFAULT_SERVICE_URL);
   const wsRef = useRef<WebSocket | null>(null);
@@ -67,12 +74,18 @@ export default function App() {
             // The service's answer to this UI's decision. If it didn't go through (no host carried the Apply
             // out, or the Dismiss wasn't recorded), undo the verdict and say why.
             const key = `${msg.project_id}/${msg.suggestion_id}`;
+            const title = titlesRef.current.get(key) ?? "A suggestion";
             unansweredRef.current.delete(key);
             syncUnanswered();
             if (!msg.ok) {
-              const what = msg.type === "ack_apply" ? "Couldn't apply" : "Dismiss wasn't recorded";
+              const note = `${msg.type === "ack_apply" ? "Couldn't apply" : "Dismiss wasn't recorded"}: ${msg.detail}`;
               setVerdicts((prev) => without(prev, key));
-              setNotes((prev) => ({ ...prev, [key]: `${what}: ${msg.detail}` }));
+              setNotes((prev) => ({ ...prev, [key]: note }));
+              setAnnouncement(`${title}: ${note}`);
+            } else if (msg.type === "ack_apply") {
+              const how: CarriedOut = msg.status ?? "applied"; // a service without status only said it went through
+              setCarriedOut((prev) => ({ ...prev, [key]: how }));
+              setAnnouncement(`${title}: ${CARRIED_OUT_TEXT[how]}`);
             }
           } else if (msg.type === "error") {
             console.warn("[sensei] the service refused a message:", msg.message);
@@ -94,6 +107,9 @@ export default function App() {
         if (lost.length > 0) {
           setVerdicts((prev) => lost.reduce((rest, key) => without(rest, key), prev));
           setNotes((prev) => ({ ...prev, ...Object.fromEntries(lost.map((key) => [key, LOST_ANSWER])) }));
+          setAnnouncement(lost.length === 1
+            ? `${titlesRef.current.get(lost[0]) ?? "A suggestion"}: ${LOST_ANSWER}`
+            : `The connection dropped before the service answered ${lost.length} decisions, so they may or may not have gone through`);
         }
         if (!stopped) retry = setTimeout(connect, 1000);
       };
@@ -115,17 +131,19 @@ export default function App() {
   // Apply asks the service to send the suggestion's action to the host (the outcome arrives as
   // action_result); Dismiss is plain feedback. Each is answered once (ack_apply, ack_feedback): the
   // decision shows at once, and it is undone if it didn't go through.
-  const decide = (projectId: string, suggestionId: string, verdict: Verdict) => {
+  const decide = (projectId: string, s: Suggestion, verdict: Verdict) => {
     const ws = wsRef.current;
     // Only show a verdict the service actually received; the buttons are disabled while disconnected.
     if (ws?.readyState !== WebSocket.OPEN) return;
     ws.send(JSON.stringify(verdict === "accepted"
-      ? { type: "apply", project_id: projectId, suggestion_id: suggestionId }
-      : { type: "feedback", suggestion_id: suggestionId, verdict, project_id: projectId }));
-    const key = `${projectId}/${suggestionId}`;
+      ? { type: "apply", project_id: projectId, suggestion_id: s.id }
+      : { type: "feedback", suggestion_id: s.id, verdict, project_id: projectId }));
+    const key = `${projectId}/${s.id}`;
+    titlesRef.current.set(key, s.title);
     unansweredRef.current.add(key);
     syncUnanswered();
     setVerdicts((prev) => ({ ...prev, [key]: verdict }));
+    setCarriedOut((prev) => without(prev, key));
     // what the card said about an earlier attempt no longer applies
     setNotes((prev) => without(prev, key));
     if (verdict === "accepted") setOutcomes((prev) => without(prev, key));
@@ -134,7 +152,7 @@ export default function App() {
   const stageOf = (key: string): Stage => {
     const verdict = verdicts[key];
     if (verdict === "rejected") return "dismissed";
-    if (verdict === "accepted") return unanswered.has(key) ? "applying" : "applied";
+    if (verdict === "accepted") return unanswered.has(key) ? "applying" : carriedOut[key] ?? "applied";
     return "idle";
   };
 
@@ -149,6 +167,7 @@ export default function App() {
           {connected ? "Connected" : connection === "connecting" ? "Connecting…" : `Can't reach ${serviceUrl}, retrying`}
         </p>
       </header>
+      <p className="visually-hidden" role="status">{announcement}</p>
 
       <main>
         {projectIds.length === 0 && (connected ? (
@@ -185,7 +204,7 @@ export default function App() {
                       outcomes={outcomes[key] ?? []}
                       note={notes[key]}
                       disabled={!connected}
-                      onDecide={(verdict) => decide(projectId, s.id, verdict)}
+                      onDecide={(verdict) => decide(projectId, s, verdict)}
                     />
                   );
                 })}

@@ -1,4 +1,4 @@
-import type { ActionOutcome, Suggestion } from "./types";
+import type { ActionOutcome, CarriedOut, Suggestion } from "./types";
 
 // What the UI says about suggestions, in an editor's words rather than the protocol's.
 
@@ -7,6 +7,13 @@ export const KIND_LABEL: Record<string, string> = {
   transition: "Transition",
   keyframe: "Keyframe",
   vfx: "Effect"
+};
+
+// the card's status once an Apply went through, by how (ack_apply's status)
+export const CARRIED_OUT_TEXT: Record<CarriedOut, string> = {
+  applied: "Applied",
+  marked: "Marked for you to finish",
+  duplicate: "Already applied"
 };
 
 export const OUTCOME_TEXT: Record<ActionOutcome["status"], string> = {
@@ -24,8 +31,10 @@ const amount = (value: unknown) => Number(value).toFixed(2);
 export function summarize(s: Suggestion): string {
   const p = s.action.params;
   switch (s.action.op) {
-    case "apply_color_grade":
-      return `${p.lut}, contrast ${amount(p.contrast)}, saturation ${amount(p.sat)}`;
+    case "apply_color_grade": {
+      const tints = [p.shadow_tint && `${p.shadow_tint} shadows`, p.highlight_tint && `${p.highlight_tint} highlights`];
+      return [`${p.lut}`, `contrast ${amount(p.contrast)}`, `saturation ${amount(p.sat)}`, ...tints].filter(Boolean).join(", ");
+    }
     case "apply_transition_at_cut":
       return `${p.type === "dip_to_black" ? "Dip to black" : "Cross dissolve"}, ${p.frames} frames, at the cut at ${seconds(p.at)}`;
     case "apply_vfx_preset":

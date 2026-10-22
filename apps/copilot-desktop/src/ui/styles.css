@@ -207,6 +207,28 @@ body {
   line-height: 1.3;
 }
 
+/* focus lands here after a decision; only show it when the decision was made from the keyboard */
+.card__title:focus {
+  outline: none;
+}
+
+.card__title:focus-visible {
+  outline: 2px solid var(--focus);
+  outline-offset: 2px;
+}
+
+.visually-hidden {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  margin: -1px;
+  padding: 0;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  white-space: nowrap;
+  border: 0;
+}
+
 .card__why {
   margin: 0;
   color: var(--muted);
@@ -301,6 +323,10 @@ body {
 
 .state--done {
   color: var(--ok);
+}
+
+.state--marked {
+  color: var(--kind);
 }
 
 .state--waiting::before {

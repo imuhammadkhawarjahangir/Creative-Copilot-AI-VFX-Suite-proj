@@ -43,7 +43,8 @@ mock host's playhead moves. Apply sends the suggestion to the host (the mock hos
 host's answer); Dismiss sends feedback to the service (visible in its logs). A decision is
 remembered for that suggestion: ids are derived from content, so a suggestion you applied or dismissed shows as
 decided whenever it reappears, for the rest of the session. If it didn't take effect (the suggestion changed just as
-you clicked, or no host carried it out), the decision is undone and the card says why. The buttons are disabled while
+you clicked, or no host carried it out), the decision is undone and the card says why; so is a decision whose answer
+was lost because the connection dropped, since its outcome is unknown (deciding again is safe). The buttons are disabled while
 the UI is disconnected.
 
 SENSEI learns from these decisions: kinds of suggestion you apply gain confidence and kinds you dismiss lose it

@@ -9,6 +9,8 @@ const DEFAULT_SERVICE_URL = "ws://127.0.0.1:8000";
 
 const MAX_OUTCOMES = 4; // host answers kept per card, so other UIs' repeated Applies can't grow it forever
 
+const LOST_ANSWER = "The connection dropped before the service answered, so this may or may not have gone through";
+
 function without<T>(record: Record<string, T>, key: string): Record<string, T> {
   const next = { ...record };
   delete next[key];
@@ -25,6 +27,8 @@ export default function App() {
   const [notes, setNotes] = useState<Record<string, string>>({});
   const [connected, setConnected] = useState(false);
   const wsRef = useRef<WebSocket | null>(null);
+  // decisions sent on the current connection and not answered yet (ack_apply / ack_feedback), by key
+  const unansweredRef = useRef(new Set<string>());
 
   useEffect(() => {
     let stopped = false;
@@ -53,13 +57,16 @@ export default function App() {
             const key = `${msg.project_id}/${msg.suggestion_id}`;
             const outcome: ActionOutcome = { status: msg.status, detail: msg.detail };
             setOutcomes((prev) => ({ ...prev, [key]: [...(prev[key] ?? []), outcome].slice(-MAX_OUTCOMES) }));
-          } else if ((msg.type === "ack_apply" || msg.type === "ack_feedback") && !msg.ok) {
-            // The service's answer to this UI's decision: the Apply wasn't carried out by any host, or the
-            // Dismiss wasn't recorded. Undo the verdict and say why.
+          } else if (msg.type === "ack_apply" || msg.type === "ack_feedback") {
+            // The service's answer to this UI's decision. If it didn't go through (no host carried the Apply
+            // out, or the Dismiss wasn't recorded), undo the verdict and say why.
             const key = `${msg.project_id}/${msg.suggestion_id}`;
-            const what = msg.type === "ack_apply" ? "Couldn't apply" : "Dismiss wasn't recorded";
-            setVerdicts((prev) => without(prev, key));
-            setNotes((prev) => ({ ...prev, [key]: `${what}: ${msg.detail}` }));
+            unansweredRef.current.delete(key);
+            if (!msg.ok) {
+              const what = msg.type === "ack_apply" ? "Couldn't apply" : "Dismiss wasn't recorded";
+              setVerdicts((prev) => without(prev, key));
+              setNotes((prev) => ({ ...prev, [key]: `${what}: ${msg.detail}` }));
+            }
           } else if (msg.type === "error") {
             console.warn("[sensei] the service refused a message:", msg.message);
           } else if (msg.type === "project_closed") {
@@ -71,6 +78,15 @@ export default function App() {
       // The service may start after the UI, or restart: keep retrying.
       ws.onclose = () => {
         setConnected(false);
+        // Answers are sent to the connection that made the decision, so those still owed are lost with it:
+        // the outcome is unknown. Undo those verdicts. Deciding again is safe: an action a host already
+        // carried out comes back as a duplicate, and a later vote replaces the earlier one.
+        const lost = [...unansweredRef.current];
+        unansweredRef.current.clear();
+        if (lost.length > 0) {
+          setVerdicts((prev) => lost.reduce((rest, key) => without(rest, key), prev));
+          setNotes((prev) => ({ ...prev, ...Object.fromEntries(lost.map((key) => [key, LOST_ANSWER])) }));
+        }
         if (!stopped) retry = setTimeout(connect, 1000);
       };
     };
@@ -98,6 +114,7 @@ export default function App() {
       ? { type: "apply", project_id: projectId, suggestion_id: suggestionId }
       : { type: "feedback", suggestion_id: suggestionId, verdict, project_id: projectId }));
     const key = `${projectId}/${suggestionId}`;
+    unansweredRef.current.add(key);
     setVerdicts((prev) => ({ ...prev, [key]: verdict }));
     // what the card said about an earlier attempt no longer applies
     setNotes((prev) => without(prev, key));

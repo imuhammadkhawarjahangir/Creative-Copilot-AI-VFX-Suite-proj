@@ -1,4 +1,4 @@
-import { app, BrowserWindow, ipcMain, net, protocol, session } from "electron";
+import { app, BrowserWindow, ipcMain, nativeTheme, net, protocol, session } from "electron";
 import { spawn } from "child_process";
 import path from "path";
 import { fileURLToPath, pathToFileURL } from "url";
@@ -59,10 +59,19 @@ function isUiUrl(url) {
   return target.protocol === ui.protocol && target.host === ui.host;
 }
 
+// the page's own background (src/ui/styles.css) for the current theme, so the window never shows another colour
+// while the page loads or reloads
+function windowBackground() {
+  return nativeTheme.shouldUseDarkColors ? "#1e1f23" : "#eceef1";
+}
+
 function createWindow() {
   const win = new BrowserWindow({
     width: 980,
     height: 720,
+    minWidth: 380, // the cards stack in one column down to this width
+    minHeight: 360,
+    backgroundColor: windowBackground(),
     webPreferences: {
       preload: path.join(__dirname, "preload.cjs"),
       contextIsolation: true,
@@ -76,6 +85,11 @@ function createWindow() {
   win.webContents.on("will-navigate", (event, url) => {
     if (!isUiUrl(url)) event.preventDefault();
   });
+
+  // the page follows the system theme as it changes, so the window behind it does too
+  const followTheme = () => win.setBackgroundColor(windowBackground());
+  nativeTheme.on("updated", followTheme);
+  win.on("closed", () => nativeTheme.off("updated", followTheme));
 
   load(win);
 }

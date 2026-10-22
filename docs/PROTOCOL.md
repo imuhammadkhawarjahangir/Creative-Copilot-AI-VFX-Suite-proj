@@ -76,7 +76,7 @@ Setting both is refused at startup; setting neither leaves auth off.
 
 (For the `context_frame` above the service also returns a `vfx` and a `keyframe` item; they are omitted here.)
 
-Items are ordered by confidence, highest first; `confidence` is the rule's own, adjusted by the feedback stored for that kind of suggestion (the `rationale` then says so). An item's `id` is derived from its content, so an unchanged suggestion keeps its id across frames. Times in action params (`time`, `at`) are seconds, rounded to milliseconds.
+Items are ordered by confidence, highest first; `confidence` is the rule's own, adjusted by the feedback stored for that kind of suggestion. When feedback moved it, the item carries `"adjusted": { "prior": 0.74, "applied": 0, "dismissed": 1 }` (the rule's own confidence, and the decisions that moved it); otherwise `"adjusted": null`. The `rationale` is always the rule's own. An item's `id` is derived from its content, so an unchanged suggestion keeps its id across frames. Times in action params (`time`, `at`) are seconds, rounded to milliseconds.
 
 ### Actions
 An action describes an edit. These are the only ops a host is ever asked to perform; the service checks every action against these bounds (and rejects unknown keys) before sending it.
@@ -125,9 +125,10 @@ A host refused its project still gets an `ack`, so it can't mistake a late `erro
 { "type": "ack", "ok": false, "detail": "project 'p1' is held by another client" }
 
 ### ack_apply (to apply, once the outcome is known)
-{ "type": "ack_apply", "ok": true, "project_id": "p1", "suggestion_id": "sug_7bec91a2", "detail": null }
+{ "type": "ack_apply", "ok": true, "project_id": "p1", "suggestion_id": "sug_7bec91a2", "status": "applied", "detail": null }
 
-{ "type": "ack_apply", "ok": false, "project_id": "p1", "suggestion_id": "sug_7bec91a2", "detail": "the clip it was suggested for is no longer on the timeline" }
+When `ok`, `status` says how it was carried out: the result of the host that did it, `applied`, `marked` (left for the editor to finish) or `duplicate` (it already had been). Otherwise `status` is null:
+{ "type": "ack_apply", "ok": false, "project_id": "p1", "suggestion_id": "sug_7bec91a2", "status": null, "detail": "the clip it was suggested for is no longer on the timeline" }
 
 ### ack_feedback (to feedback)
 { "type": "ack_feedback", "ok": true, "project_id": "p1", "suggestion_id": "sug_001", "detail": null }

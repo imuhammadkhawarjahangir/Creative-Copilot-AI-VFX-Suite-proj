@@ -26,7 +26,8 @@
    - (Future) Pluggable model backends: local LLM/VLM, remote APIs, hybrid
 
 3. Copilot Desktop (Electron + React, `apps/copilot-desktop/`)
-   - Shows one live suggestion stream per project
+   - Shows one live suggestion stream per project: each card gives the kind of suggestion, its confidence (and how
+     your decisions moved it), and what applying it changes, and an Apply's status until the service says how it ended
    - Apply sends the suggestion to the host through the service and shows the host's answer; Dismiss sends feedback.
      A decision that didn't take effect (the suggestion changed meanwhile, or no host carried it out) is undone, and the card says why;
      the service tells the UI, since only it knows when every host has answered

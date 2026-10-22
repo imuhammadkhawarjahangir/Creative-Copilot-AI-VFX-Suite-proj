@@ -205,7 +205,7 @@ def test_with_two_hosts_one_carrying_it_out_is_enough(client):
         b.send_json(result(action, "applied"))
         assert ui.receive_json()["status"] == "applied"
         assert ui.receive_json() == {"type": "ack_apply", "ok": True, "project_id": "p",
-                                     "suggestion_id": action["suggestion_id"], "detail": None}
+                                     "suggestion_id": action["suggestion_id"], "status": "applied", "detail": None}
 
 
 def test_with_two_hosts_it_comes_to_nothing_only_when_both_refuse(client):
@@ -228,8 +228,22 @@ def test_a_host_leaving_before_it_answers_settles_the_apply(client):
             a.send_json(result(action, "rejected"))
             assert ui.receive_json()["status"] == "rejected"
         assert ui.receive_json() == {"type": "ack_apply", "ok": False, "project_id": "p",
-                                     "suggestion_id": action["suggestion_id"],
+                                     "suggestion_id": action["suggestion_id"], "status": None,
                                      "detail": "the host left the project before answering"}
+
+
+@pytest.mark.parametrize("status", ["applied", "marked", "duplicate"])
+def test_the_answer_says_how_it_was_carried_out(client, status):
+    # "marked" means the host left it for the editor to finish: the UI must not call that "Applied"
+    with client.websocket_connect("/ws/ui") as ui, client.websocket_connect("/ws/host") as host:
+        suggestions = start(host)
+        ui.receive_json()
+        ui.send_json({"type": "apply", "project_id": "p", "suggestion_id": item_of(suggestions, "transition")["id"]})
+        action = host.receive_json()
+        host.send_json(result(action, status))
+        assert ui.receive_json()["status"] == status  # the host's result
+        ack = ui.receive_json()
+        assert (ack["type"], ack["ok"], ack["status"]) == ("ack_apply", True, status)
 
 
 def test_closing_a_project_settles_and_forgets_its_actions(client):

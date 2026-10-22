@@ -174,12 +174,13 @@ class Hub:
             self.spawn(host.send_text(message))
         return None
 
-    def answer(self, sent: Sent, ok: bool, detail: str | None = None) -> list[str]:
+    def answer(self, sent: Sent, ok: bool, detail: str | None = None, status: str | None = None) -> list[str]:
         # Tells each UI waiting on the action whether its Apply was carried out (ok: by at least one host).
         # Returns the clients whose Apply now counts as accepted: none unless ok, and none that decided otherwise since.
         if not sent.waiting:
             return []
-        message = ApplyAckMsg(ok=ok, project_id=sent.project_id, suggestion_id=sent.item["id"], detail=detail).model_dump_json()
+        message = ApplyAckMsg(ok=ok, project_id=sent.project_id, suggestion_id=sent.item["id"], status=status,
+                              detail=detail).model_dump_json()
         counted = sorted({client for _, client in sent.waiting if client is not None}) if ok else []
         for ui, _ in sent.waiting:
             self.send(ui, message)
@@ -229,7 +230,7 @@ def settle(sent: Sent, result: ActionResultMsg):
     # sent to has answered without confirming. A refused action teaches nothing.
     item = sent.item
     if result.status in CONFIRMED:
-        for client in hub.answer(sent, True):
+        for client in hub.answer(sent, True, status=result.status):
             store.vote(client, sent.project_id, item["id"],
                        arm_of(item["kind"], item["action"]["op"], item["action"]["params"]), "accepted")
             log.info("feedback %r accepted (applied; project %r, client %r)", item["id"], sent.project_id, client or None)

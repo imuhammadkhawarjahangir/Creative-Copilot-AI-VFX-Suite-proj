@@ -1,8 +1,11 @@
 export type Verdict = "accepted" | "rejected";
 
+// How an Apply went through: "marked" means the host left it for the editor to finish (ack_apply's status).
+export type CarriedOut = "applied" | "marked" | "duplicate";
+
 // A host's answer to an applied suggestion (each host of the project answers; ack_apply gives the overall outcome).
 export type ActionOutcome = {
-  status: "applied" | "marked" | "duplicate" | "rejected";
+  status: CarriedOut | "rejected";
   detail?: string | null;
 };
 
@@ -22,4 +25,6 @@ export type Suggestion = {
   confidence: number;
   rationale: string;
   action: { op: string; params: Record<string, unknown> };
+  // how the user's decisions on this kind of suggestion moved `confidence` from the rule's own `prior`
+  adjusted?: { prior: number; applied: number; dismissed: number } | null;
 };

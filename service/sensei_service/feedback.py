@@ -13,6 +13,8 @@ import threading
 import time
 from pathlib import Path
 
+from .protocol import Adjustment
+
 PRIOR_STRENGTH = 5  # how many decisions the rule's confidence is worth
 MAX_VOTES = 10_000  # votes kept; the oldest are forgotten first
 SIGNATURE_PARAM = {  # the param that distinguishes suggestions of the same kind
@@ -81,6 +83,5 @@ class FeedbackStore:
             return item
         prior = item.confidence
         item.confidence = round((prior * PRIOR_STRENGTH + accepted) / (PRIOR_STRENGTH + accepted + rejected), 2)
-        item.rationale += (f" (Adjusted from {prior:.0%} by your feedback on this kind of suggestion: "
-                           f"{accepted} applied, {rejected} dismissed.)")
+        item.adjusted = Adjustment(prior=prior, applied=accepted, dismissed=rejected)
         return item

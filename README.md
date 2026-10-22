@@ -39,7 +39,8 @@ npm install
 npm run dev
 ```
 The first run downloads the Electron binary. Suggestions stream into the window, one section per project, as the
-mock host's playhead moves. Apply sends the suggestion to the host (the mock host logs it, and the card shows the
+mock host's playhead moves. Each card shows the kind of suggestion in its own colour, how confident SENSEI is, and what
+applying it will change; the window follows the system's dark or light theme. Apply sends the suggestion to the host (the mock host logs it, and the card shows the
 host's answer); Dismiss sends feedback to the service (visible in its logs). A decision is
 remembered for that suggestion: ids are derived from content, so a suggestion you applied or dismissed shows as
 decided whenever it reappears, for the rest of the session. If it didn't take effect (the suggestion changed just as
@@ -48,7 +49,7 @@ was lost because the connection dropped, since its outcome is unknown (deciding 
 the UI is disconnected.
 
 SENSEI learns from these decisions: kinds of suggestion you apply gain confidence and kinds you dismiss lose it
-(each suggestion counts once, with your latest decision), which changes their ranking (the card's rationale says when your feedback moved a score). Feedback is stored in
+(each suggestion counts once, with your latest decision), which changes their ranking (a card says when your decisions moved its score). Feedback is stored in
 `~/.sensei/feedback.sqlite3` (the `sensei-data` volume under Docker). Delete it to start over, or set
 `SENSEI_FEEDBACK_DB=:memory:` to keep nothing between runs.
 

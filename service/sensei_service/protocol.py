@@ -171,4 +171,6 @@ class ApplyAckMsg(BaseModel):  # service -> the UI that applied: the outcome of 
     ok: bool  # a host carried it out (and the Apply counts), or none did: then `detail` says why
     project_id: str
     suggestion_id: str
+    # when ok, how: the result of the host that carried it out ("marked": left for the editor to finish)
+    status: Optional[Literal["applied", "marked", "duplicate"]] = None
     detail: Optional[str] = None

@@ -30,8 +30,10 @@ export default function App() {
   // how each Apply of this UI went through, once the service said so (ack_apply's status), by the same key
   const [carriedOut, setCarriedOut] = useState<Record<string, CarriedOut>>({});
   // The one place this UI announces to screen readers: how its own decisions turned out. The cards show their
-  // status without announcing it, so a reconnect that redraws every card stays quiet.
-  const [announcement, setAnnouncement] = useState("");
+  // status without announcing it, so a reconnect that redraws every card stays quiet. `n` counts
+  // announcements, so the same words twice in a row (a retry refused for the same reason) are spoken twice.
+  const [announcement, setAnnouncement] = useState({ text: "", n: 0 });
+  const announce = (text: string) => setAnnouncement((prev) => ({ text, n: prev.n + 1 }));
   // titles of the suggestions decided on, by key, for those announcements (a suggestion may have gone by then)
   const titlesRef = useRef(new Map<string, string>());
   const [connection, setConnection] = useState<Connection>("connecting");
@@ -74,6 +76,8 @@ export default function App() {
             // The service's answer to this UI's decision. If it didn't go through (no host carried the Apply
             // out, or the Dismiss wasn't recorded), undo the verdict and say why.
             const key = `${msg.project_id}/${msg.suggestion_id}`;
+            // an answer is only ever to a decision this connection is waiting on; anything else changes nothing
+            if (!unansweredRef.current.has(key)) return;
             const title = titlesRef.current.get(key) ?? "A suggestion";
             unansweredRef.current.delete(key);
             syncUnanswered();
@@ -81,11 +85,11 @@ export default function App() {
               const note = `${msg.type === "ack_apply" ? "Couldn't apply" : "Dismiss wasn't recorded"}: ${msg.detail}`;
               setVerdicts((prev) => without(prev, key));
               setNotes((prev) => ({ ...prev, [key]: note }));
-              setAnnouncement(`${title}: ${note}`);
+              announce(`${title}: ${note}`);
             } else if (msg.type === "ack_apply") {
               const how: CarriedOut = msg.status ?? "applied"; // a service without status only said it went through
               setCarriedOut((prev) => ({ ...prev, [key]: how }));
-              setAnnouncement(`${title}: ${CARRIED_OUT_TEXT[how]}`);
+              announce(`${title}: ${CARRIED_OUT_TEXT[how]}`);
             }
           } else if (msg.type === "error") {
             console.warn("[sensei] the service refused a message:", msg.message);
@@ -107,7 +111,7 @@ export default function App() {
         if (lost.length > 0) {
           setVerdicts((prev) => lost.reduce((rest, key) => without(rest, key), prev));
           setNotes((prev) => ({ ...prev, ...Object.fromEntries(lost.map((key) => [key, LOST_ANSWER])) }));
-          setAnnouncement(lost.length === 1
+          announce(lost.length === 1
             ? `${titlesRef.current.get(lost[0]) ?? "A suggestion"}: ${LOST_ANSWER}`
             : `The connection dropped before the service answered ${lost.length} decisions, so they may or may not have gone through`);
         }
@@ -167,7 +171,9 @@ export default function App() {
           {connected ? "Connected" : connection === "connecting" ? "Connecting…" : `Can't reach ${serviceUrl}, retrying`}
         </p>
       </header>
-      <p className="visually-hidden" role="status">{announcement}</p>
+      {/* The region stays put and its child is replaced on every announcement: screen readers announce what is
+          added to a live region (repeated words too), and often ignore a region that is itself new. */}
+      <p className="visually-hidden" role="status"><span key={announcement.n}>{announcement.text}</span></p>
 
       <main>
         {projectIds.length === 0 && (connected ? (
